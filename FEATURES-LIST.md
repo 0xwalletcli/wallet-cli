@@ -1,0 +1,202 @@
+# wallet-cli Feature Roadmap
+
+Goal: Make wallet-cli the one-stop-shop for all personal finance needs.
+
+---
+
+## Completed Features
+
+- **Feature 0: Wallet Audit + Mainnet Gate** — `wallet audit` with comprehensive price/pool/API checks + `checkAuditGate()` blocks mainnet writes if stale >7 days. Checks: CoinGecko prices, CoW Swap ETH + WSOL-ETH quotes, Jupiter SOL quote, deBridge bridge quote + status API, Uniswap API, LI.FI API, Etherscan API, cross-platform spread, USDC peg, stETH/ETH ratio, Lido TVL, Jito pool health, netguard completeness, RPC connectivity.
+- **Feature 1: Execute Preview + Confirmation** — all write commands have structured preview + confirm()
+- **Feature 2: Buy Command** — `wallet buy <amount> <token>` via Jupiter ExactOut (SOL), multi-provider CoW/Uniswap/LI.FI (ETH, WSOL-ETH), wrap (WSOL)
+- **Feature 3: WSOL Support** — wrap/unwrap, balance display, send, tokens listing (Solana SPL WSOL)
+- **Feature 3b: WSOL-ETH Support** — Wormhole wrapped SOL on Ethereum as ERC-20. Swap/buy/send/balance via CoW Swap. CLI name: `wsol-eth`
+- **Feature 4: Bridge USDC Cross-Chain** — `bridge usdc usdc-sol`, `bridge usdc-sol usdc`, `bridge usdc-sol eth`
+- **Feature 4b: Quote Command** — `wallet quote <amount>` compares 6 DeFi paths (CoW/Uniswap/LI.FI+Lido, deBridge/LI.FI+Jito, deBridge+Jupiter+Jito) for deploying USDC into staked assets. Shows fees, slippage, cost-per-unit, and yield projections.
+- **Feature 4c: Zap Command** — `wallet zap <amount> usdc <asset>` one-step USDC → staked asset. stETH path (multi-provider swap+Lido), JitoSOL with 2 paths (multi-provider bridge direct vs bridge+Jupiter). Preview + path selection + sequential execution. History aggregated from all providers.
+- **Feature 7: Security Audit Research** — assessed Lido (A), Jito (A), deBridge (A+), CoW Swap (A). All category leaders with strong security records. No changes needed.
+- **Feature 8: Provider Architecture + Multi-DEX/Bridge** — `SwapProvider`/`BridgeProvider` interfaces, provider registry, auto-registration via side-effect imports. Swap providers: CoW Swap, Uniswap (Trading API + UniswapX), LI.FI. Bridge providers: deBridge, LI.FI. Commands refactored to use provider abstraction. Default mode: `auto` (fetch all providers, show comparison table, user selects). Pin with `wallet config set swap <id>` or `--route <id>`. Config stored at `~/.wallet-cli/config.json`.
+- **Feature 9: Enhanced Staking Display** — `wallet balance full` staking dashboard: exchange rates, APR/APY (Lido + Jito APIs), USD values (CoinGecko), earned tracking (stETH via Etherscan deposits, JitoSOL via Solana RPC transaction parsing), projected annual yield, pending Lido withdrawals. Default `wallet balance` shows compact balances only. Staked token labels are clickable links to Lido/Jito. Wallet addresses link to block explorers. `wallet health` shows APR/APY in staking section. `wallet quote` shows yield projections per path ($/yr + base asset/yr). Shared staking module (`src/lib/staking.ts`).
+- **Feature 10: Solana Swaps (Jupiter)** — `wallet swap usdc sol` / `wallet swap sol usdc` via Jupiter aggregator. Shared `src/lib/jupiter.ts` module (quote, swap, history, mint lookup). Dynamic slippage (100 bps default, up to 300 bps), dynamic compute units, priority fees, retry on send. Friendly error handling for slippage tolerance exceeded (0x1771). Jupiter history integrated into `wallet swap history`.
+- **Feature 11: Value Command** — `wallet value <amount> <token> [target]` shows USD value of any managed asset + cross-token conversion (e.g., `value 10000 usdc eth`). Staked assets resolve through base token: stETH -> ETH -> USD (rate from Lido contract `getPooledEthByShares`), JitoSOL -> SOL -> USD (rate from Jito stake pool). Supports: eth, weth, sol, wsol, wsol-eth, usdc, steth, jitosol.
+- **Feature 12: Price Fallback** — shared `src/lib/prices.ts` with CoinGecko primary + DeFi Llama fallback. All price-dependent commands (balance, value, quote, zap, health) use `fetchPrices()`. Never blocked by CoinGecko 429 rate limits. `coins.llama.fi` added to netguard allowlist.
+- **Feature 13: History Polish** — all history commands: compact single-line table format, parallel fetch (EVM + Solana via `Promise.allSettled`), clickable shortened IDs/tx hashes (OSC 8 terminal hyperlinks via `link()`/`txLink()` in format.ts), amounts displayed for all operations (Solana: parsed from pre/post balances; ETH unstake: decoded from calldata + internal txs), aligned fixed-width columns, configurable limit (`HISTORY_LIMIT` in config.ts). Bridge status normalization via STATUS_MAP (raw API states -> short display names). Solana txs resolve known token mints (USDC, JitoSOL, WSOL) instead of showing generic "SPL".
+
+---
+
+## Feature 5: Fiat On-Ramp & Off-Ramp (with 2FA)
+
+**Status:** TODO
+**Priority:** Medium (very nice to have)
+**Complexity:** High
+
+### Goal
+
+```
+wallet deposit 5000 usd    -> bank -> USDC on Ethereum (no CEX custody)
+wallet withdraw 5000 usdc  -> USDC on Ethereum -> bank (no CEX custody)
+```
+
+### Key Constraint
+
+Every fiat-to-crypto path requires a licensed money transmitter between your bank and the blockchain. The question is whether that intermediary is a **full CEX** (you hold funds in their custody) or a **pass-through ramp** (funds go directly to your self-custodial wallet). All options below are pass-through ramps — they handle fiat rails but never custody your crypto.
+
+**Truly headless fiat-to-crypto (zero browser interaction)** is extremely rare due to KYC/AML regulations. Most providers require a one-time browser-based KYC step, after which subsequent transactions can be more automated.
+
+### Recommended Approach: Tiered (Non-CEX Primary, CEX Fallback)
+
+#### Option A (Primary): Coinbase Onramp API — Zero-Fee USDC
+
+This is NOT the Coinbase Exchange. It's the Coinbase Developer Platform's on-ramp product — a pass-through service where USDC goes directly to your self-custodial wallet.
+
+**On-ramp flow:**
+1. CLI calls Coinbase Onramp REST API to create a session (server-side, API key auth)
+2. CLI opens a browser URL for user to authorize payment (ACH/Apple Pay/debit card)
+   - First time: KYC + payment method setup (~2 min)
+   - Subsequent: one-click confirmation
+3. Coinbase sends USDC **directly to user's self-custodial wallet address**
+4. **Fee: 0% on USDC** (zero-fee USDC program)
+
+**Off-ramp flow:**
+1. CLI calls Coinbase Offramp REST API to create a session
+2. User signs a tx sending USDC to a Coinbase-provided address
+3. Coinbase converts to USD and sends via ACH to user's linked bank
+4. **Fee: 0% on USDC**
+5. Caveat: user needs a Coinbase account with linked bank for off-ramp
+
+Guest Checkout: up to $500/week with Apple Pay/debit, no Coinbase account needed for on-ramp.
+
+#### Option B: Transak Stream — Best Non-CEX Off-Ramp
+
+Transak Stream allows off-ramp without any widget — user sends USDC to a designated address, Transak reconciles and deposits fiat to bank. On-ramp requires a widget.
+
+**Off-ramp flow:**
+1. CLI calls Transak API to get a deposit address
+2. CLI builds + signs a USDC transfer to that address
+3. Transak converts to fiat, deposits via ACH (US) or SEPA (EU)
+4. **Fee: 1% flat**
+5. No CEX account required
+
+**On-ramp:** Requires Transak widget (browser redirect). 1% fee.
+
+#### Option C: MoonPay CLI — Most Terminal-Native
+
+MoonPay launched `moonpay-cli` (Feb 24, 2026) — a non-custodial CLI tool with fiat on/off-ramp. Purpose-built for terminal use.
+
+**Flow:**
+1. First time: KYC through MoonPay checkout (browser)
+2. After setup: headless transactions via saved payment method
+3. **Fees: ~1% bank transfer, up to 4.5% card**
+4. Supports Apple Pay, Venmo, PayPal as funding sources
+5. US available, USDC on Ethereum supported
+
+### Provider Comparison (Non-CEX Only)
+
+| Provider | On-Ramp | Off-Ramp | Headless? | Fees | US + USDC ETH | Notes |
+|----------|---------|----------|-----------|------|---------------|-------|
+| **Coinbase Onramp** | Yes | Yes | Partial (browser for payment auth) | **0% USDC** | Yes | Best fees, not a CEX — pass-through ramp |
+| **Transak Stream** | Yes (widget) | **Yes (headless)** | Off-ramp: yes. On-ramp: no | 1% flat | Yes | Best headless off-ramp |
+| **MoonPay CLI** | Yes | Yes | After initial KYC | 1-4.5% | Yes | Only truly CLI-native option |
+
+### Recommended Strategy
+
+1. **Primary on-ramp:** Coinbase Onramp (0% USDC fee, browser for payment auth only)
+2. **Primary off-ramp:** Coinbase Offramp (0% USDC fee) OR Transak Stream (1% but no CB account needed)
+3. **Fallback:** MoonPay CLI (terminal-native, higher fees)
+4. **CEX exchange APIs (Coinbase Advanced Trade, Kraken) go in Feature 6 (Brokerage Integrations), not here**
+
+### 2FA Implementation (TOTP)
+
+- Generate TOTP shared secret on `wallet setup-2fa`
+- Display QR code in terminal (use `qrcode-terminal` npm package)
+- User scans with Google Authenticator / Authy / 1Password
+- Store encrypted secret in `~/.wallet-cli/config.enc`
+- Before deposit/withdraw: prompt for 6-digit TOTP code, validate with `otpauth` or `speakeasy` npm package
+- Generate recovery codes on setup
+
+### New Files
+
+- `src/commands/deposit.ts` — on-ramp command
+- `src/commands/withdraw.ts` — off-ramp command
+- `src/lib/totp.ts` — 2FA helpers
+- `src/lib/ramp.ts` — on-ramp/off-ramp provider abstraction (Coinbase Onramp + Transak)
+
+### Netguard
+
+Add `api.developer.coinbase.com`, `global.transak.com`, `api.moonpay.com` to `ALLOWED_HOSTS`.
+
+---
+
+## Feature 6: CEX & Brokerage Integrations (Long-term)
+
+**Status:** TODO — research phase
+**Priority:** Low (very far down the line)
+**Complexity:** Very High
+
+This is the only section where CEX integrations belong. Core wallet operations (swap, bridge, buy, deposit, withdraw) should use non-custodial/pass-through providers. CEX integrations here are for portfolio aggregation, DCA, stock trading, and advanced features.
+
+### Platform Assessment
+
+#### Tier 1: Realistic (Good APIs, can build today)
+
+**Coinbase Advanced Trade API** (crypto trading + portfolio view)
+- Full REST API with official SDKs (Python, TypeScript)
+- Buy/sell crypto, check balances, withdraw to external wallet, market data
+- Auth: JWT (API key + secret from Developer Platform)
+- Rate limits: 10,000 req/hour
+- Docs: https://docs.cdp.coinbase.com/advanced-trade/docs/welcome
+- **Use case here: portfolio aggregation, DCA automation, not core on/off-ramp**
+
+**Alpaca** (US stocks + crypto)
+- Commission-free US stocks and options, 0.15/0.25% crypto
+- Full REST + WebSocket API, official Python SDK (`alpaca-py`)
+- Paper trading environment for safe development
+- Auth: API key + secret
+- Docs: https://docs.alpaca.markets/
+- **Best developer-first option for stocks**
+
+**Kraken** (crypto)
+- Full REST + WebSocket + FIX API
+- Supports programmatic fiat deposit/withdrawal (unlike Coinbase)
+- Auth: API key + private key (HMAC-SHA512)
+- Community Python SDK: `python-kraken-sdk`
+- Docs: https://docs.kraken.com/
+
+#### Tier 2: Possible but Limited
+
+**Robinhood**
+- Official Crypto Trading API exists (launched recently): https://docs.robinhood.com/
+  - Crypto only. No stocks, no options via API.
+  - Auth: API key from Crypto Account Settings portal
+- Stocks/options: **No official public API.**
+- **Not recommended until they release a full stocks API**
+
+**Interactive Brokers**
+- Most comprehensive: stocks, options, futures, forex, bonds, crypto across 170 markets
+- Requires TWS or IB Gateway running locally (not purely REST)
+- Good for advanced multi-asset portfolio management but adds operational complexity
+
+### Recommended Implementation Order
+
+1. **Coinbase** — already needed for Feature 5, covers crypto trading + on/off ramp
+2. **Alpaca** — commission-free stocks, cleanest API for equities
+3. **Plaid** — unified portfolio view (bank + brokerage balances)
+4. **Kraken** — secondary crypto exchange, better fiat support
+5. **Interactive Brokers** — advanced users, international markets
+6. **Robinhood** — only if they release a full stocks API
+
+### High-Value Features Once Integrated
+
+- **Unified portfolio view**: `wallet portfolio` showing all assets across all platforms
+- **Automated DCA**: scheduled buys via Coinbase (crypto) + Alpaca (stocks)
+- **Rebalancing**: compute drift from target allocation, suggest/execute trades
+- **Tax data export**: aggregate transaction history into CSV for tax tools
+
+---
+
+## Implementation Priority
+
+| # | Feature | Status | Priority |
+|---|---------|--------|----------|
+| 5 | Fiat on-ramp/off-ramp + 2FA | TODO | Medium |
+| 6 | Brokerage integrations | TODO | Low |

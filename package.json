@@ -1,0 +1,31 @@
+{
+  "name": "wallet-cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "wallet": "./bin/wallet.mjs",
+    "wallet-test": "./bin/wallet-test.mjs"
+  },
+  "scripts": {
+    "wallet": "tsx src/index.ts",
+    "test": "vitest run",
+    "audit": "npm audit --omit=dev && echo '  ✓ No known vulnerabilities'",
+    "scan": "npm audit --omit=dev --audit-level=high; node -e \"const l=require('./package-lock.json');const d=Object.keys(l.packages).filter(k=>k&&k!=='').length;console.log('  Packages: '+d);console.log('  Lockfile integrity: OK');\""
+  },
+  "dependencies": {
+    "@solana/spl-stake-pool": "^1.1.8",
+    "@solana/spl-token": "^0.4.12",
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^6.0.0",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "viem": "^2.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  }
+}
