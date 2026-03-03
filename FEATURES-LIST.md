@@ -24,7 +24,7 @@ Goal: Make wallet-cli the one-stop-shop for all personal finance needs.
 
 ---
 
-## Feature 5: Fiat On-Ramp & Off-Ramp (with 2FA)
+## Feature 15: Fiat On-Ramp & Off-Ramp (with 2FA)
 
 **Status:** TODO
 **Priority:** Medium (very nice to have)
@@ -103,7 +103,7 @@ MoonPay launched `moonpay-cli` (Feb 24, 2026) — a non-custodial CLI tool with 
 1. **Primary on-ramp:** Coinbase Onramp (0% USDC fee, browser for payment auth only)
 2. **Primary off-ramp:** Coinbase Offramp (0% USDC fee) OR Transak Stream (1% but no CB account needed)
 3. **Fallback:** MoonPay CLI (terminal-native, higher fees)
-4. **CEX exchange APIs (Coinbase Advanced Trade, Kraken) go in Feature 6 (Brokerage Integrations), not here**
+4. **CEX exchange APIs (Coinbase Advanced Trade, Kraken) go in Feature 16 (Brokerage Integrations), not here**
 
 ### 2FA Implementation (TOTP)
 
@@ -127,7 +127,7 @@ Add `api.developer.coinbase.com`, `global.transak.com`, `api.moonpay.com` to `AL
 
 ---
 
-## Feature 6: CEX & Brokerage Integrations (Long-term)
+## Feature 16: CEX & Brokerage Integrations (Long-term)
 
 **Status:** TODO — research phase
 **Priority:** Low (very far down the line)
@@ -178,7 +178,7 @@ This is the only section where CEX integrations belong. Core wallet operations (
 
 ### Recommended Implementation Order
 
-1. **Coinbase** — already needed for Feature 5, covers crypto trading + on/off ramp
+1. **Coinbase** — already needed for Feature 15, covers crypto trading + on/off ramp
 2. **Alpaca** — commission-free stocks, cleanest API for equities
 3. **Plaid** — unified portfolio view (bank + brokerage balances)
 4. **Kraken** — secondary crypto exchange, better fiat support
@@ -194,9 +194,171 @@ This is the only section where CEX integrations belong. Core wallet operations (
 
 ---
 
+## Feature 14: Encrypted Keystore + Signer Abstraction
+
+**Status:** TODO
+**Priority:** High
+**Complexity:** Medium
+
+### Problem
+
+Private keys stored as plain text in `.env`. Anyone with file access (disk theft, backup leak, accidental commit) gets full control of both EVM and Solana wallets. No encryption at rest, no password protection.
+
+### Solution: Signer Abstraction Layer
+
+Abstract signing behind a common interface so multiple key storage backends can coexist:
+
+```
+┌─────────────┐
+│  CLI Command │  (swap, send, bridge, etc.)
+└──────┬──────┘
+       │
+┌──────▼──────┐
+│   Signer    │  resolveSigner(chain, opts) → { sign, address }
+└──────┬──────┘
+       │ resolves based on config + flags
+       ├── EnvSigner          (.env private key — current default, backward compat)
+       ├── KeystoreSigner     (AES-256-GCM encrypted file + scrypt KDF)
+       ├── LedgerSigner       (USB HID via @ledgerhq packages)
+       ├── WalletConnectSigner (QR → MetaMask/Phantom mobile)
+       └── (future: Trezor, macOS Keychain, etc.)
+```
+
+### Phase 1: Encrypted Keystore (this feature)
+
+Password-protected encrypted keystore files, same pattern as `geth account new` and Foundry's `cast wallet import`.
+
+**Encryption scheme:**
+- **KDF:** scrypt (N=2^18, r=8, p=1) — password → 32-byte key
+- **Cipher:** AES-256-GCM (from `@noble/ciphers` — already installed as viem dep, zero new deps)
+- **Format:** JSON file with salt, nonce, ciphertext, scrypt params, chain type, public address
+- **Storage:** `~/.wallet-cli/keystores/<name>.json`
+
+**Keystore file format:**
+```json
+{
+  "version": 1,
+  "name": "my-evm",
+  "chain": "evm",
+  "address": "0x1234...abcd",
+  "crypto": {
+    "cipher": "aes-256-gcm",
+    "kdf": "scrypt",
+    "kdfparams": { "n": 262144, "r": 8, "p": 1, "dklen": 32 },
+    "salt": "<hex>",
+    "nonce": "<hex>",
+    "ciphertext": "<hex>",
+    "tag": "<hex>"
+  }
+}
+```
+
+**New CLI commands:**
+```
+wallet keys list                          # show all configured signers (env, keystore files, etc.)
+wallet keys import <name>                 # import a key into encrypted keystore
+                                          #   prompts for: private key, password (twice)
+                                          #   derives address, encrypts, saves to ~/.wallet-cli/keystores/<name>.json
+wallet keys import <name> --from-env      # import current .env key into keystore (migrate)
+wallet keys delete <name>                 # delete a keystore file (with confirmation)
+wallet keys export <name>                 # decrypt and display private key (with password + confirmation)
+```
+
+**Signer selection:**
+```
+wallet swap ETH USDC 1.0                          # uses default signer (config or env fallback)
+wallet swap ETH USDC 1.0 --signer keystore:my-evm # explicit keystore
+wallet swap ETH USDC 1.0 --signer env             # explicit .env
+wallet config set signer keystore:my-evm           # set default signer
+```
+
+**Session password caching:**
+- First command that needs signing prompts for password
+- Decrypted key held in memory for the session (single CLI invocation)
+- No persistent password caching across invocations (each `wallet` run prompts once)
+- Password input uses hidden/masked terminal input
+
+### Phase 2: Ledger Hardware Wallet (future)
+
+- EVM: viem has built-in Ledger support via `@ledgerhq/hw-transport-node-hid`
+- Solana: `@ledgerhq/hw-app-solana` + `@solana/web3.js` transaction signing
+- Keys never touch disk
+- New dep: `@ledgerhq/hw-transport-node-hid`, `@ledgerhq/hw-app-solana`
+- Commands: `wallet keys ledger` (test connection), `--signer ledger` flag
+
+### Phase 3: WalletConnect v2 (future)
+
+- QR code in terminal (via `qrcode-terminal`) → scan with MetaMask Mobile / Phantom
+- Every transaction pushed to phone for approval
+- Session persistence in `~/.wallet-cli/wc-sessions/`
+- New dep: `@walletconnect/sign-client`, `qrcode-terminal`
+- Commands: `wallet keys connect` (pair), `--signer walletconnect` flag
+- Netguard: add `relay.walletconnect.com` to allowlist
+- Solana support maturing but usable for basic signing
+
+### Phase 4: macOS Keychain (future, optional)
+
+- macOS-only via `/usr/bin/security` CLI
+- Requires controlled exception in netguard for that one binary
+- Nice-to-have for Mac users but not cross-platform
+- Commands: `wallet keys import <name> --keychain`, `--signer keychain:<name>`
+
+### New Files (Phase 1)
+
+- `src/lib/keystore.ts` — encrypt/decrypt keystore files, scrypt + AES-256-GCM
+- `src/lib/signer.ts` — `Signer` interface, `resolveSigner()` dispatcher, `EnvSigner`, `KeystoreSigner`
+- `src/commands/keys.ts` — `wallet keys` command (list, import, delete, export)
+
+### Changes to Existing Files (Phase 1)
+
+- `src/config.ts` — replace `getEvmAccount()` / `getSolanaKeypair()` calls with `resolveSigner()` (keep old functions as `EnvSigner` internals)
+- `src/lib/evm.ts` — `getWalletClient()` accepts a signer instead of calling `getEvmAccount()` directly
+- `src/lib/solana.ts` — signing functions accept keypair from signer instead of calling `getSolanaKeypair()` directly
+- `src/index.ts` — register `keys` command
+- `src/lib/config.ts` — add `signer` to persisted config schema (`~/.wallet-cli/config.json`)
+- `src/lib/netguard.ts` — no changes for Phase 1 (no new network calls)
+- `src/commands/audit.ts` — add keystore health check (verify files exist and are readable)
+- `CLAUDE.md` — update architecture section
+
+### Signer Interface
+
+```typescript
+interface Signer {
+  type: 'env' | 'keystore' | 'ledger' | 'walletconnect';
+  // EVM
+  getEvmAccount(): Account;                    // viem Account for signing
+  getEvmAddress(): `0x${string}`;              // public address (no signing needed)
+  // Solana
+  getSolanaKeypair(): Keypair;                 // for transaction signing
+  getSolanaAddress(): string;                  // public key (no signing needed)
+}
+```
+
+### Migration Path
+
+1. `.env` remains the default signer — zero breaking changes
+2. `wallet keys import my-evm --from-env` migrates existing key to keystore
+3. `wallet config set signer keystore:my-evm` switches default
+4. User can then remove `EVM_PRIVATE_KEY` from `.env`
+5. All existing commands work unchanged — signer resolution is transparent
+
+### Security Comparison
+
+| | .env (current) | Encrypted keystore | Ledger | WalletConnect |
+|---|---|---|---|---|
+| Encryption at rest | None | AES-256-GCM + scrypt | N/A (hardware) | N/A (phone) |
+| File access = key access | Yes | No (need password) | No | No |
+| Backup leak exposure | Full | Password-protected | None | None |
+| Offline signing | Yes | Yes | Yes | No |
+| Cross-platform | Yes | Yes | Yes | Yes |
+| New dependencies | — | None (@noble/ciphers already installed) | @ledgerhq packages | @walletconnect + qrcode |
+
+---
+
 ## Implementation Priority
 
 | # | Feature | Status | Priority |
 |---|---------|--------|----------|
-| 5 | Fiat on-ramp/off-ramp + 2FA | TODO | Medium |
-| 6 | Brokerage integrations | TODO | Low |
+| 14 | Encrypted keystore + signer abstraction | TODO | High |
+| 15 | Fiat on-ramp/off-ramp + 2FA | TODO | Medium |
+| 16 | Brokerage integrations | TODO | Low |
