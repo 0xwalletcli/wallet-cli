@@ -1,5 +1,6 @@
 import { parseEther, formatEther } from 'viem';
-import { type Network, EXPLORERS, getEvmAccount, getSolanaKeypair } from '../config.js';
+import { type Network, EXPLORERS } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getWethBalance, wrapEth, unwrapWeth, waitForReceipt } from '../lib/evm.js';
 import { getSolBalance, getWsolBalance, wrapSol, unwrapSol } from '../lib/solana.js';
 import { formatToken } from '../lib/format.js';
@@ -37,7 +38,8 @@ export async function unwrapCommand(token: string, network: Network, dryRun: boo
 // ── ETH -> WETH ──
 
 async function wrapEthCommand(amount: string, network: Network, dryRun: boolean) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const value = parseEther(amount);
   const explorer = EXPLORERS[network];
 
@@ -94,7 +96,8 @@ async function wrapEthCommand(amount: string, network: Network, dryRun: boolean)
 // ── WETH -> ETH ──
 
 async function unwrapWethCommand(network: Network, dryRun: boolean, amount?: string) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const explorer = EXPLORERS[network];
 
   if (dryRun) warnDryRun();
@@ -162,18 +165,20 @@ async function unwrapWethCommand(network: Network, dryRun: boolean, amount?: str
 // ── SOL -> WSOL ──
 
 async function wrapSolCommand(amount: string, network: Network, dryRun: boolean) {
-  const keypair = getSolanaKeypair();
+  const signer = await resolveSigner();
+  const walletAddr = await signer.getSolanaAddress();
+  if (!walletAddr) { console.error('  No Solana address configured.'); process.exit(1); }
   const amountNum = Number(amount);
   const explorer = EXPLORERS[network];
 
   if (dryRun) warnDryRun();
   console.log(`  Wrap: ${amount} SOL -> WSOL`);
   console.log(`  Chain: Solana ${network}`);
-  console.log(`  Wallet: ${keypair.publicKey.toBase58()}`);
+  console.log(`  Wallet: ${walletAddr}`);
   warnMainnet(network, dryRun);
   console.log('  Checking balance...');
 
-  const balance = await getSolBalance(network, keypair.publicKey.toBase58());
+  const balance = await getSolBalance(network, walletAddr);
   if (balance < amountNum + 0.01) {
     console.log(`  Insufficient SOL (have: ${formatToken(balance, 6)}, need: ${amount} + fees)\n`);
     return;
@@ -182,7 +187,7 @@ async function wrapSolCommand(amount: string, network: Network, dryRun: boolean)
   console.log(`\n  You wrap:    ${amount} SOL`);
   console.log(`  You receive: ${amount} WSOL\n`);
 
-  const tracker = new BalanceTracker(solTokens(network, keypair.publicKey.toBase58(), ['SOL', 'WSOL']));
+  const tracker = new BalanceTracker(solTokens(network, walletAddr, ['SOL', 'WSOL']));
 
   if (dryRun) {
     console.log('  [DRY RUN] Skipping execution.\n');
@@ -199,7 +204,7 @@ async function wrapSolCommand(amount: string, network: Network, dryRun: boolean)
 
   console.log('  Sending transaction...');
   try {
-    const sig = await wrapSol(network, keypair, amountNum);
+    const sig = await wrapSol(network, signer, amountNum);
     const cluster = network === 'testnet' ? '?cluster=devnet' : '';
     console.log(`  TX:  ${sig}`);
     console.log(`  URL: ${explorer.solana}/tx/${sig}${cluster}`);
@@ -213,17 +218,19 @@ async function wrapSolCommand(amount: string, network: Network, dryRun: boolean)
 // ── WSOL -> SOL ──
 
 async function unwrapWsolCommand(network: Network, dryRun: boolean) {
-  const keypair = getSolanaKeypair();
+  const signer = await resolveSigner();
+  const walletAddr = await signer.getSolanaAddress();
+  if (!walletAddr) { console.error('  No Solana address configured.'); process.exit(1); }
   const explorer = EXPLORERS[network];
 
   if (dryRun) warnDryRun();
   console.log('  Unwrap: WSOL -> SOL');
   console.log(`  Chain: Solana ${network}`);
-  console.log(`  Wallet: ${keypair.publicKey.toBase58()}`);
+  console.log(`  Wallet: ${walletAddr}`);
   warnMainnet(network, dryRun);
   console.log('  Checking WSOL balance...');
 
-  const wsolBal = await getWsolBalance(network, keypair.publicKey.toBase58());
+  const wsolBal = await getWsolBalance(network, walletAddr);
   if (wsolBal === 0) {
     console.log('  No WSOL to unwrap.\n');
     return;
@@ -233,7 +240,7 @@ async function unwrapWsolCommand(network: Network, dryRun: boolean) {
   console.log(`  You receive: ~${formatToken(wsolBal, 6)} SOL`);
   console.log('  Note: WSOL always unwraps entire balance.\n');
 
-  const tracker = new BalanceTracker(solTokens(network, keypair.publicKey.toBase58(), ['SOL', 'WSOL']));
+  const tracker = new BalanceTracker(solTokens(network, walletAddr, ['SOL', 'WSOL']));
 
   if (dryRun) {
     console.log('  [DRY RUN] Skipping execution.\n');
@@ -250,7 +257,7 @@ async function unwrapWsolCommand(network: Network, dryRun: boolean) {
 
   console.log('  Sending transaction...');
   try {
-    const sig = await unwrapSol(network, keypair);
+    const sig = await unwrapSol(network, signer);
     const cluster = network === 'testnet' ? '?cluster=devnet' : '';
     console.log(`  TX:  ${sig}`);
     console.log(`  URL: ${explorer.solana}/tx/${sig}${cluster}`);

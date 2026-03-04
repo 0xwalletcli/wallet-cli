@@ -1,6 +1,7 @@
 import { VersionedTransaction, PublicKey } from '@solana/web3.js';
 import { JUPITER_CONFIG, SOLANA_MINTS, HISTORY_LIMIT, type Network } from '../config.js';
 import { getConnection } from './solana.js';
+import type { Signer } from '../signers/types.js';
 
 // ── Types ────────────────────────────────────────────
 
@@ -84,10 +85,10 @@ export async function getJupiterQuote(params: {
 export async function buildAndSendJupiterSwap(params: {
   userPublicKey: string;
   quote: JupiterQuote;
-  keypair: import('@solana/web3.js').Keypair;
+  signer: Signer;
   network: Network;
 }): Promise<string> {
-  const { userPublicKey, quote, keypair, network } = params;
+  const { userPublicKey, quote, signer, network } = params;
 
   const swapRes = await fetch(`${JUPITER_CONFIG.api}/swap`, {
     method: 'POST',
@@ -110,9 +111,9 @@ export async function buildAndSendJupiterSwap(params: {
   const conn = getConnection(network);
   const txBuf = Buffer.from(swapTransaction, 'base64');
   const tx = VersionedTransaction.deserialize(txBuf);
-  tx.sign([keypair]);
+  const signed = await signer.signSolanaVersionedTransaction(tx);
 
-  return conn.sendTransaction(tx, { maxRetries: 3 });
+  return conn.sendTransaction(signed, { maxRetries: 3 });
 }
 
 // ── On-chain history ─────────────────────────────────

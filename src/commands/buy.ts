@@ -1,4 +1,5 @@
-import { type Network, TOKENS, COW_CONFIG, SOLANA_MINTS, EXPLORERS, getEvmAccount, getSolanaKeypair } from '../config.js';
+import { type Network, TOKENS, COW_CONFIG, SOLANA_MINTS, EXPLORERS } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getERC20Balance, getERC20Allowance, approveERC20, unwrapWeth, waitForReceipt } from '../lib/evm.js';
 import { getConnection, getSplTokenBalance } from '../lib/solana.js';
 import { getJupiterQuote, buildAndSendJupiterSwap } from '../lib/jupiter.js';
@@ -136,8 +137,9 @@ async function buySolana(amount: string, network: Network, dryRun: boolean) {
     process.exit(1);
   }
 
-  const keypair = getSolanaKeypair();
-  const walletAddr = keypair.publicKey.toBase58();
+  const signer = await resolveSigner();
+  const walletAddr = await signer.getSolanaAddress();
+  if (!walletAddr) { console.error('  No Solana address configured.'); process.exit(1); }
   const amountNum = Number(amount);
   const lamports = Math.round(amountNum * 1e9);
   const explorer = EXPLORERS[network];
@@ -205,7 +207,7 @@ async function buySolana(amount: string, network: Network, dryRun: boolean) {
     signature = await buildAndSendJupiterSwap({
       userPublicKey: walletAddr,
       quote,
-      keypair,
+      signer,
       network,
     });
   } catch (err: any) {
@@ -233,7 +235,8 @@ async function buySolana(amount: string, network: Network, dryRun: boolean) {
 // ── Buy ETH (kind: buy) ──
 
 async function buyEvm(amount: string, network: Network, dryRun: boolean, providerFlag?: string) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const tokens = TOKENS[network];
   const cow = COW_CONFIG[network];
 
@@ -410,7 +413,8 @@ async function buyEvm(amount: string, network: Network, dryRun: boolean, provide
 // ── Buy WSOL-ETH (Wormhole wrapped SOL) ──
 
 async function buyWsolEth(amount: string, network: Network, dryRun: boolean, providerFlag?: string) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const tokens = TOKENS[network];
 
   const buyToken = tokens.WSOL;

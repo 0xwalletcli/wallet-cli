@@ -1,5 +1,6 @@
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { type Network, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, EXPLORERS, TOKENS, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, SOLANA_MINTS, HISTORY_LIMIT, getEvmAccount, getSolanaAddress } from '../config.js';
+import { type Network, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, EXPLORERS, TOKENS, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, SOLANA_MINTS, HISTORY_LIMIT } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getConnection } from '../lib/solana.js';
 import { formatToken, formatAddress } from '../lib/format.js';
 import { listAddresses } from '../lib/addressbook.js';
@@ -64,9 +65,10 @@ function termLink(text: string, url: string): string {
 }
 
 export async function transactionsCommand(network: Network, limit: number) {
-  const evmAccount = getEvmAccount();
+  const signer = await resolveSigner();
+  const evmAccount = await signer.getEvmAccount();
   const evmAddress = evmAccount.address.toLowerCase();
-  const solAddress = getSolanaAddress();
+  const solAddress = await signer.getSolanaAddress();
   const tokens = TOKENS[network];
   const explorer = EXPLORERS[network];
 

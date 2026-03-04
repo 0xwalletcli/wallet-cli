@@ -1,7 +1,8 @@
 import { parseEther, parseAbi } from 'viem';
-import { PublicKey, Transaction, LAMPORTS_PER_SOL, sendAndConfirmTransaction } from '@solana/web3.js';
+import { PublicKey, Transaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { depositSol } from '@solana/spl-stake-pool';
-import { type Network, LIDO_CONFIG, JITO_CONFIG, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, EXPLORERS, HISTORY_LIMIT, getEvmAccount, getSolanaAddress, getSolanaKeypair } from '../config.js';
+import { type Network, LIDO_CONFIG, JITO_CONFIG, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, EXPLORERS, HISTORY_LIMIT } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getWalletClient, waitForReceipt } from '../lib/evm.js';
 import { getConnection, getSolBalance } from '../lib/solana.js';
 import { formatToken, formatAddress, txLink } from '../lib/format.js';
@@ -30,7 +31,8 @@ export async function stakeCommand(
 }
 
 async function stakeEth(amount: string, network: Network, dryRun: boolean) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const lido = LIDO_CONFIG[network];
   const value = parseEther(amount);
 
@@ -79,7 +81,7 @@ async function stakeEth(amount: string, network: Network, dryRun: boolean) {
   console.log('  Submitting to Lido...');
   const { trackTx, clearTx } = await import('../lib/txtracker.js');
   const explorer = EXPLORERS[network];
-  const wallet = getWalletClient(network);
+  const wallet = await getWalletClient(network);
   try {
     const hash = await wallet.writeContract({
       account,
@@ -110,20 +112,22 @@ async function stakeSol(amount: string, network: Network, dryRun: boolean) {
     process.exit(1);
   }
 
-  const keypair = getSolanaKeypair();
+  const signer = await resolveSigner();
+  const walletAddr = await signer.getSolanaAddress();
+  if (!walletAddr) { console.error('  No Solana address configured.'); process.exit(1); }
   const amountNum = Number(amount);
   const lamports = Math.round(amountNum * LAMPORTS_PER_SOL);
 
   if (dryRun) warnDryRun();
   console.log(`  Stake: ${amount} SOL -> JitoSOL (Jito)`);
   console.log(`  Chain: Solana ${network}`);
-  console.log(`  Wallet: ${keypair.publicKey.toBase58()}`);
+  console.log(`  Wallet: ${walletAddr}`);
   console.log(`  Stake pool: ${JITO_CONFIG.stakePool}`);
   warnMainnet(network, dryRun);
   console.log('  Checking balance...');
 
   // Check SOL balance
-  const balance = await getSolBalance(network, keypair.publicKey.toBase58());
+  const balance = await getSolBalance(network, walletAddr);
   let insufficientBalance = false;
   if (balance < amountNum + 0.01) {
     console.log(`  ⚠ Insufficient SOL (have: ${formatToken(balance, 6)}, need: ${amount} + fees)`);
@@ -133,7 +137,7 @@ async function stakeSol(amount: string, network: Network, dryRun: boolean) {
   console.log(`\n  You stake: ${amount} SOL`);
   console.log('  You receive: JitoSOL (rate varies)\n');
 
-  const tracker = new BalanceTracker(solTokens(network, keypair.publicKey.toBase58(), ['SOL', 'JitoSOL']));
+  const tracker = new BalanceTracker(solTokens(network, walletAddr, ['SOL', 'JitoSOL']));
 
   if (dryRun) {
     console.log('  [DRY RUN] Skipping execution.\n');
@@ -155,12 +159,13 @@ async function stakeSol(amount: string, network: Network, dryRun: boolean) {
 
   const conn = getConnection(network);
   const stakePoolAddress = new PublicKey(JITO_CONFIG.stakePool);
+  const userPubkey = new PublicKey(walletAddr);
 
   console.log('  Building transaction...');
-  const { instructions, signers } = await depositSol(
+  const { instructions, signers: ephemeralSigners } = await depositSol(
     conn,
     stakePoolAddress,
-    keypair.publicKey,
+    userPubkey,
     lamports,
   );
 
@@ -169,9 +174,18 @@ async function stakeSol(amount: string, network: Network, dryRun: boolean) {
     tx.add(ix);
   }
 
+  // Add ephemeral signers (e.g., stake account keypairs)
+  // For EnvSigner, signAndSendSolanaTransaction handles the user keypair
+  // Ephemeral signers need to be added to the tx before sending
+  if (ephemeralSigners.length > 0) {
+    tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+    tx.feePayer = userPubkey;
+    tx.partialSign(...ephemeralSigners);
+  }
+
   console.log('  Sending transaction...');
   try {
-    const sig = await sendAndConfirmTransaction(conn, tx, [keypair, ...signers]);
+    const sig = await signer.signAndSendSolanaTransaction(conn, tx);
     const explorer = EXPLORERS[network];
     console.log(`  TX:  ${sig}`);
     console.log(`  URL: ${explorer.solana}/tx/${sig}`);
@@ -202,14 +216,15 @@ export async function stakeHistoryCommand(network: Network) {
 
   // ── Build parallel fetch promises ──
   const apiKey = process.env.ETHERSCAN_API_KEY;
-  const solAddress = getSolanaAddress();
+  const signer = await resolveSigner();
+  const solAddress = await signer.getSolanaAddress();
 
   type EvmRow = { date: Date; ethVal: number; ok: boolean; hash: string };
   interface JitoRow { date: Date | null; solAmt: number; jitoAmt: number; err: boolean; sig: string }
 
   const evmPromise: Promise<EvmRow[]> = (async () => {
     if (!apiKey) return [];
-    const account = getEvmAccount();
+    const account = await signer.getEvmAccount();
     const lido = LIDO_CONFIG[network];
     const params = new URLSearchParams({
       chainid: ETHERSCAN_CHAIN_ID[network],

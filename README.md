@@ -15,6 +15,7 @@ CLI tool for managing crypto without centralized exchanges.
 - **Transactions** history across Ethereum + Solana with clickable explorer links
 - **Wrap/Unwrap** native assets: ETH ↔ WETH, SOL ↔ WSOL
 - **Audit** all integrations before mainnet transactions (prices, pools, contracts, APIs)
+- **Connect** MetaMask or Phantom via [WalletConnect](https://walletconnect.com) — sign transactions without storing private keys
 - **Address book** for human-readable wallet names
 - **Price fallback** — CoinGecko primary, DeFi Llama fallback (never blocked by rate limits)
 
@@ -45,6 +46,9 @@ ETHERSCAN_API_KEY=
 # Optional — alternative swap providers (see Provider Architecture below)
 UNISWAP_API_KEY=               # free key from https://developers.uniswap.org
 LIFI_API_KEY=                  # increases LI.FI rate limit (200 req/2hr → 200 req/min)
+
+# Optional — WalletConnect (sign via MetaMask/Phantom instead of .env keys)
+WC_PROJECT_ID=                 # free project ID from https://cloud.walletconnect.com
 ```
 
 ## Quick Start
@@ -94,6 +98,8 @@ Pin a default to skip the comparison:
 wallet config                              # show current config
 wallet config set swap cow                 # always use CoW Swap
 wallet config set bridge debridge          # always use deBridge
+wallet config set signer wc               # sign via WalletConnect (MetaMask/Phantom)
+wallet config set signer env              # sign with .env keys (default)
 wallet config reset                        # back to auto
 ```
 
@@ -244,6 +250,9 @@ wallet buy history             # recent buy orders
 | `wallet mint <token> [amount]` | Get testnet tokens — `mint eth`, `mint usdc` (faucet links), `mint sol 2` (airdrop) |
 | `wallet approve <token> <spender> <amt>` | ERC-20 approval helper |
 | `wallet cancel [orderId]` | Cancel a pending CoW Swap order |
+| `wallet connect` | Connect MetaMask/Phantom via WalletConnect (scan QR code) |
+| `wallet disconnect` | Disconnect WalletConnect session |
+| `wallet keys` | Show signing keys status and WalletConnect sessions |
 | `wallet address add <name>` | Add to address book (`--evm`, `--solana`) |
 | `wallet address list` | List saved addresses |
 | `wallet address remove <name>` | Remove from address book |
@@ -286,7 +295,8 @@ wallet buy history             # recent buy orders
 - **`child_process` disabled** — prevents subprocess-based exfiltration (`curl`, `wget`, etc.)
 - **UDP sockets blocked** — prevents DNS-tunneling exfiltration
 - **Install scripts disabled** (`.npmrc: ignore-scripts=true`) — prevents `postinstall` attacks
-- Private keys stay in `.env` on your machine — never sent anywhere
+- **Signer abstraction** — pluggable signing backends: `.env` keys (default) or WalletConnect (MetaMask/Phantom, keys never touch disk)
+- Private keys stay in `.env` on your machine — never sent anywhere (or use WalletConnect to avoid storing keys entirely)
 - All transactions require explicit `[y/N]` confirmation before signing
 - ERC-20 approvals are always exact amounts (never infinite)
 - Mainnet operations show a warning banner

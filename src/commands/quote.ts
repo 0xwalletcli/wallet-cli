@@ -3,8 +3,9 @@ import { PublicKey } from '@solana/web3.js';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
 import {
   type Network, TOKENS, COW_CONFIG, DEBRIDGE_CONFIG,
-  LIDO_CONFIG, JITO_CONFIG, SOLANA_MINTS, getEvmAccount,
+  LIDO_CONFIG, JITO_CONFIG, SOLANA_MINTS,
 } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient } from '../lib/evm.js';
 import { getConnection } from '../lib/solana.js';
 import { formatToken, formatUSD, formatGasFee } from '../lib/format.js';
@@ -51,7 +52,7 @@ async function fetchCowQuote(
   buyDecimals: number,
 ): Promise<CowResult> {
   let fromAddress = '0x0000000000000000000000000000000000000001';
-  try { fromAddress = getEvmAccount().address; } catch {}
+  try { fromAddress = (await (await resolveSigner()).getEvmAccount()).address; } catch {}
 
   const cow = COW_CONFIG[network];
   const tokens = TOKENS[network];
@@ -180,7 +181,7 @@ async function fetchProviderSwapQuote(
 ): Promise<SwapQuoteResult> {
   const provider = getSwapProvider(providerId);
   let fromAddress = '0x0000000000000000000000000000000000000001';
-  try { fromAddress = getEvmAccount().address; } catch {}
+  try { fromAddress = (await (await resolveSigner()).getEvmAccount()).address; } catch {}
   const tokens = TOKENS[network];
 
   const quote = await withTimeout(provider.getQuote({
@@ -206,7 +207,7 @@ async function fetchProviderBridgeQuote(
 ): Promise<BridgeResult> {
   const provider = getBridgeProvider(providerId);
   let srcAddress = '0x0000000000000000000000000000000000000001';
-  try { srcAddress = getEvmAccount().address; } catch {}
+  try { srcAddress = (await (await resolveSigner()).getEvmAccount()).address; } catch {}
   const dstAddress = process.env.SOLANA_ADDRESS || 'DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy';
 
   const quote = await withTimeout(provider.getQuote({

@@ -196,7 +196,7 @@ This is the only section where CEX integrations belong. Core wallet operations (
 
 ## Feature 14: Encrypted Keystore + Signer Abstraction
 
-**Status:** TODO
+**Status:** Partially complete (signer abstraction + WalletConnect done, encrypted keystore TODO)
 **Priority:** High
 **Complexity:** Medium
 
@@ -286,15 +286,18 @@ wallet config set signer keystore:my-evm           # set default signer
 - New dep: `@ledgerhq/hw-transport-node-hid`, `@ledgerhq/hw-app-solana`
 - Commands: `wallet keys ledger` (test connection), `--signer ledger` flag
 
-### Phase 3: WalletConnect v2 (future)
+### Phase 3: WalletConnect v2 — DONE
 
-- QR code in terminal (via `qrcode-terminal`) → scan with MetaMask Mobile / Phantom
-- Every transaction pushed to phone for approval
+- `wallet connect` — QR code in terminal → scan with MetaMask / Phantom
+- `wallet disconnect` — close session
+- `wallet keys` — show env keys + WC sessions
+- `wallet config set signer wc` — set WC as default signer
+- EVM: custom viem `LocalAccount` via `toAccount()`, `eth_sendTransaction` + `eth_signTypedData_v4` via WC relay
+- Solana: `solana_signTransaction` for both VersionedTransaction and legacy Transaction
 - Session persistence in `~/.wallet-cli/wc-sessions/`
-- New dep: `@walletconnect/sign-client`, `qrcode-terminal`
-- Commands: `wallet keys connect` (pair), `--signer walletconnect` flag
-- Netguard: add `relay.walletconnect.com` to allowlist
-- Solana support maturing but usable for basic signing
+- Deps: `@walletconnect/sign-client`, `qrcode-terminal`
+- Netguard: `relay.walletconnect.com` added to allowlist
+- Files: `src/signers/walletconnect.ts`, `src/commands/connect.ts`
 
 ### Phase 4: macOS Keychain (future, optional)
 
@@ -303,36 +306,44 @@ wallet config set signer keystore:my-evm           # set default signer
 - Nice-to-have for Mac users but not cross-platform
 - Commands: `wallet keys import <name> --keychain`, `--signer keychain:<name>`
 
-### New Files (Phase 1)
+### Completed: Signer Abstraction + WalletConnect
 
-- `src/lib/keystore.ts` — encrypt/decrypt keystore files, scrypt + AES-256-GCM
-- `src/lib/signer.ts` — `Signer` interface, `resolveSigner()` dispatcher, `EnvSigner`, `KeystoreSigner`
-- `src/commands/keys.ts` — `wallet keys` command (list, import, delete, export)
+**Files created:**
+- `src/signers/types.ts` — `Signer` interface
+- `src/signers/env.ts` — `EnvSigner` (wraps .env keys)
+- `src/signers/walletconnect.ts` — `WalletConnectSigner` (WC v2 relay)
+- `src/signers/index.ts` — `resolveSigner()` factory
+- `src/commands/connect.ts` — connect/disconnect/keys commands
 
-### Changes to Existing Files (Phase 1)
+**Files modified:**
+- All commands and providers use `resolveSigner()` instead of direct key access
+- `src/lib/evm.ts` — `getWalletClient()` is async, uses signer
+- `src/lib/solana.ts` — signing functions accept `Signer` instead of `Keypair`
+- `src/lib/jupiter.ts` — accepts `Signer` instead of `Keypair`
+- `src/lib/config.ts` — added `signer` field to config schema
+- `src/lib/netguard.ts` — added `relay.walletconnect.com`
+- `src/index.ts` — registered connect/disconnect/keys commands
 
-- `src/config.ts` — replace `getEvmAccount()` / `getSolanaKeypair()` calls with `resolveSigner()` (keep old functions as `EnvSigner` internals)
-- `src/lib/evm.ts` — `getWalletClient()` accepts a signer instead of calling `getEvmAccount()` directly
-- `src/lib/solana.ts` — signing functions accept keypair from signer instead of calling `getSolanaKeypair()` directly
-- `src/index.ts` — register `keys` command
-- `src/lib/config.ts` — add `signer` to persisted config schema (`~/.wallet-cli/config.json`)
-- `src/lib/netguard.ts` — no changes for Phase 1 (no new network calls)
-- `src/commands/audit.ts` — add keystore health check (verify files exist and are readable)
-- `CLAUDE.md` — update architecture section
-
-### Signer Interface
+### Signer Interface (implemented)
 
 ```typescript
 interface Signer {
-  type: 'env' | 'keystore' | 'ledger' | 'walletconnect';
-  // EVM
-  getEvmAccount(): Account;                    // viem Account for signing
-  getEvmAddress(): `0x${string}`;              // public address (no signing needed)
-  // Solana
-  getSolanaKeypair(): Keypair;                 // for transaction signing
-  getSolanaAddress(): string;                  // public key (no signing needed)
+  type: 'env' | 'walletconnect';
+  label: string;
+  getEvmAddress(): Promise<`0x${string}` | null>;
+  getSolanaAddress(): Promise<string | null>;
+  getEvmAccount(): Promise<LocalAccount>;
+  getEvmWalletClient(chain, transport): Promise<WalletClient<HttpTransport, Chain, LocalAccount>>;
+  signSolanaVersionedTransaction(tx: VersionedTransaction): Promise<VersionedTransaction>;
+  signAndSendSolanaTransaction(conn: Connection, tx: Transaction): Promise<string>;
 }
 ```
+
+### New Files Needed (Phase 1 — Encrypted Keystore, still TODO)
+
+- `src/lib/keystore.ts` — encrypt/decrypt keystore files, scrypt + AES-256-GCM
+- `src/signers/keystore.ts` — `KeystoreSigner` implementing `Signer`
+- `src/commands/keys.ts` — `wallet keys import`, `wallet keys delete`, `wallet keys export`
 
 ### Migration Path
 
@@ -359,6 +370,6 @@ interface Signer {
 
 | # | Feature | Status | Priority |
 |---|---------|--------|----------|
-| 14 | Encrypted keystore + signer abstraction | TODO | High |
+| 14 | Encrypted keystore + signer abstraction | Signer + WC done, keystore TODO | High |
 | 15 | Fiat on-ramp/off-ramp + 2FA | TODO | Medium |
 | 16 | Brokerage integrations | TODO | Low |

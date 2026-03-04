@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { Network } from '../../config.js';
-import { TOKENS, UNISWAP_CONFIG, EXPLORERS, getEvmAccount } from '../../config.js';
+import { TOKENS, UNISWAP_CONFIG, EXPLORERS } from '../../config.js';
+import { resolveSigner } from '../../signers/index.js';
 import { getPublicClient, getWalletClient, getERC20Allowance, approveERC20, waitForReceipt, simulateTx } from '../../lib/evm.js';
 import type { SwapProvider, SwapQuote, SwapResult, SwapOrderSummary } from '../types.js';
 import { registerSwapProvider } from '../registry.js';
@@ -183,7 +184,8 @@ const uniswapSwapProvider: SwapProvider = {
 
   async signAndSubmit(quote: SwapQuote, network: Network): Promise<string> {
     const apiKey = getApiKey();
-    const account = getEvmAccount();
+    const signer = await resolveSigner();
+    const account = await signer.getEvmAccount();
     const raw = quote._raw as UniswapQuoteResponse;
 
     if (raw.routing === 'CLASSIC') {
@@ -205,7 +207,7 @@ const uniswapSwapProvider: SwapProvider = {
         swapBody.signature = signature;
       }
 
-      const wallet = getWalletClient(network);
+      const wallet = await getWalletClient(network);
       const explorer = EXPLORERS[network];
       const MAX_ATTEMPTS = 3;
       let lastError = '';

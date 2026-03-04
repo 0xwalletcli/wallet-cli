@@ -1,5 +1,6 @@
 import { VersionedTransaction } from '@solana/web3.js';
-import { type Network, DEBRIDGE_CONFIG, TOKENS, EXPLORERS, SOLANA_CONFIG, HISTORY_LIMIT, getEvmAccount, getSolanaAddress, getSolanaKeypair } from '../config.js';
+import { type Network, DEBRIDGE_CONFIG, TOKENS, EXPLORERS, SOLANA_CONFIG, HISTORY_LIMIT } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getERC20Balance, getERC20Allowance, approveERC20, getWalletClient, waitForReceipt, simulateTx } from '../lib/evm.js';
 import { getConnection, getSolBalance, getSplTokenBalance } from '../lib/solana.js';
 import { resolveAddress } from '../lib/addressbook.js';
@@ -179,15 +180,16 @@ async function bridgeEvmToSolana(
   recipient?: string,
   providerFlag?: string,
 ) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   let solAddress: string;
 
   if (recipient) {
     solAddress = resolveAddress(recipient, 'solana');
   } else {
-    const addr = getSolanaAddress();
+    const addr = await signer.getSolanaAddress();
     if (!addr) {
-      console.error('  No SOLANA_ADDRESS in .env and no --recipient specified.');
+      console.error('  No Solana address configured and no --recipient specified.');
       process.exit(1);
     }
     solAddress = addr;
@@ -321,7 +323,7 @@ async function bridgeEvmToSolana(
   console.log('  Sending bridge transaction on Ethereum...');
   const { trackTx, clearTx } = await import('../lib/txtracker.js');
   const explorer = EXPLORERS[network];
-  const wallet = getWalletClient(network);
+  const wallet = await getWalletClient(network);
   const hash = await wallet.sendTransaction({
     account: account,
     to: txData.to as `0x${string}`,
@@ -368,15 +370,16 @@ async function bridgeSolanaToEvm(
   recipient?: string,
   providerFlag?: string,
 ) {
-  const keypair = getSolanaKeypair();
-  const solAddress = keypair.publicKey.toBase58();
+  const signer = await resolveSigner();
+  const solAddress = await signer.getSolanaAddress();
+  if (!solAddress) { console.error('  No Solana address configured.'); process.exit(1); }
 
   // Destination is EVM
   let evmAddress: string;
   if (recipient) {
     evmAddress = resolveAddress(recipient, 'evm');
   } else {
-    const account = getEvmAccount();
+    const account = await signer.getEvmAccount();
     evmAddress = account.address;
   }
 
@@ -479,8 +482,8 @@ async function bridgeSolanaToEvm(
   tx.message.recentBlockhash = blockhash;
 
   // Sign and send
-  tx.sign([keypair]);
-  const signature = await conn.sendTransaction(tx);
+  const signed = await signer.signSolanaVersionedTransaction(tx);
+  const signature = await conn.sendTransaction(signed);
 
   trackTx(signature, 'solana', network);
   console.log(`  TX:  ${signature}`);
@@ -521,8 +524,9 @@ function chainName(chainId: number): string {
 export async function bridgeHistoryCommand(network: Network) {
   const allProviders = listBridgeProviders();
   const names = allProviders.map(p => p.displayName).join(', ');
-  const account = getEvmAccount();
-  const solAddr = getSolanaAddress();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
+  const solAddr = await signer.getSolanaAddress();
   const explorer = EXPLORERS[network];
 
   console.log(`\n  Fetching bridge history from ${names}...\n`);

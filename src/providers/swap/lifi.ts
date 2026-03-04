@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { Network } from '../../config.js';
-import { LIFI_CONFIG, TOKENS, EXPLORERS, getEvmAccount } from '../../config.js';
+import { LIFI_CONFIG, TOKENS, EXPLORERS } from '../../config.js';
+import { resolveSigner } from '../../signers/index.js';
 import { getWalletClient, getERC20Allowance, approveERC20, waitForReceipt, simulateTx } from '../../lib/evm.js';
 import type { SwapProvider, SwapQuote, SwapResult, SwapOrderSummary } from '../types.js';
 import { registerSwapProvider } from '../registry.js';
@@ -155,8 +156,9 @@ const lifiSwapProvider: SwapProvider = {
   },
 
   async signAndSubmit(quote: SwapQuote, network: Network): Promise<string> {
-    const account = getEvmAccount();
-    const wallet = getWalletClient(network);
+    const signer = await resolveSigner();
+    const account = await signer.getEvmAccount();
+    const wallet = await getWalletClient(network);
     const explorer = EXPLORERS[network];
     const origRaw = quote._raw as LifiQuoteResponse;
     const chain = chainId(network);

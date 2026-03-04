@@ -21,6 +21,7 @@ Default network is `mainnet`. Use `--network testnet` or `-n testnet` for testne
 - **Solana RPC performance**: Never query signatures from high-traffic contracts (e.g., Jito stake pool). Always query the user's own address and filter results. Fetch chains in parallel with `Promise.allSettled`.
 - **When adding a new third-party integration** (API, contract, bridge, DEX): you MUST also expand `src/commands/audit.ts` to verify that service's health, prices, and/or pool liquidity. The audit is the trust gate before mainnet transactions — every external dependency must be covered.
 - **Provider abstraction**: Swap and bridge protocols are implemented as providers in `src/providers/`. Each provider implements `SwapProvider` or `BridgeProvider` from `types.ts` and auto-registers via side-effect import in `index.ts`. Commands default to `auto` mode (fetch from all providers, show comparison table, let user select). Use `wallet config set swap <id>` to pin a default, or `--route <id>` to override for a single invocation. Config stored at `~/.wallet-cli/config.json`.
+- **Signer abstraction**: All signing goes through the `Signer` interface (`src/signers/types.ts`). Use `resolveSigner()` to get the active signer — never import private key helpers directly. `EnvSigner` wraps `.env` keys; `WalletConnectSigner` signs via MetaMask/Phantom. Commands and lib functions accept `Signer` instead of raw keypairs. EVM: `signer.getEvmAccount()` returns a viem `LocalAccount`. Solana: two modes — `signSolanaVersionedTransaction()` for Jupiter/bridge VersionedTransactions, `signAndSendSolanaTransaction()` for legacy Transactions. For Jito ephemeral signers, `partialSign()` with ephemeral keys first, then pass to `signer.signAndSendSolanaTransaction()`. Set the active signer via `wallet config set signer wc` or `wallet config set signer env`.
 - **History limit**: All history/txs commands cap output at `HISTORY_LIMIT` (defined once in `src/config.ts`). Change it there to update everywhere.
 - **Price fallback**: Use `fetchPrices()` from `src/lib/prices.ts` for USD pricing — it tries CoinGecko first, falls back to DeFi Llama on rate limit. Never call CoinGecko directly in new code (exception: `audit.ts` intentionally tests CoinGecko health).
 - **Terminal links**: Use `link()` and `txLink()` from `src/lib/format.ts` for clickable hyperlinks in terminal output (OSC 8 escape sequences). All tx hashes in history commands should be clickable shortened links.
@@ -65,7 +66,13 @@ npm install @solana/spl-token@0.4.12 @solana/spl-stake-pool@1.1.8
 src/
   index.ts              — entry point, commander setup, [args...] subcommand routing, timed() wrapper, audit gate
   config.ts             — chain configs, token addresses, RPCs, explorer URLs, Jupiter/WSOL/HISTORY_LIMIT config
+  signers/
+    types.ts            — Signer interface (getEvmAccount, signSolanaVersionedTransaction, etc.)
+    env.ts              — EnvSigner: wraps .env private keys (EVM_PRIVATE_KEY, SOLANA_PRIVATE_KEY)
+    walletconnect.ts    — WalletConnectSigner: signs via MetaMask/Phantom over WC v2 relay, session persistence (~/.wallet-cli/wc-sessions/)
+    index.ts            — resolveSigner() factory: reads config/override, returns cached Signer singleton
   commands/
+    connect.ts          — `wallet connect` / `wallet disconnect` / `wallet keys` for WalletConnect pairing
     config.ts           — `wallet config` / `config set` / `config reset` for provider preferences
     balance.ts          — multi-chain balance display. Default shows balances only; `full` adds staking dashboard (rates, APR/APY, earned, yields) + pending withdrawals. Supports external addresses/aliases, shows WSOL. Staked token labels link to Lido/Jito, wallet addresses link to explorers.
     value.ts            — `wallet value <amount> <token> [target]` USD pricing + cross-token conversion (e.g., `value 10000 usdc eth`). Staked assets show base+USD (stETH->ETH->USD, JitoSOL->SOL->USD). Gets stETH rate from Lido contract, JitoSOL rate from Jito pool.
@@ -104,11 +111,11 @@ src/
     netguard.ts         — network egress firewall (see Security Model)
     txtracker.ts        — SIGINT handler, prints pending tx hash on Ctrl+C
     auditgate.ts        — audit record management (~/.wallet-cli/audit.json), mainnet gate (blocks if stale >7 days)
-    evm.ts              — viem clients, ERC-20 helpers
-    solana.ts           — Solana connection, SOL/SPL/WSOL balance helpers, wrap/unwrap
+    evm.ts              — viem clients (async getWalletClient via resolveSigner), ERC-20 helpers
+    solana.ts           — Solana connection, SOL/SPL/WSOL balance helpers, wrap/unwrap (accepts Signer)
     format.ts           — formatToken, parseTokenAmount, formatUSD, formatAddress, formatGasFee, link (OSC 8 hyperlink), txLink (shortened clickable tx hash)
     prompt.ts           — confirm(), validateAmount(), warnMainnet(), warnDryRun(), select() for provider selection
-    config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider defaults
+    config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider, signer defaults
     addressbook.ts      — JSON-file address book (~/.wallet-cli/addresses.json)
 ```
 
@@ -210,4 +217,5 @@ SOLANA_RPC_URL=...          # optional, overrides default publicnode RPC
 ETHERSCAN_API_KEY=...       # optional, for transaction history + stake/unstake history
 UNISWAP_API_KEY=...         # required for Uniswap swaps (free key from developers.uniswap.org)
 LIFI_API_KEY=...            # optional, increases LI.FI rate limit (200 req/2hr → 200 req/min)
+WC_PROJECT_ID=...           # optional, required for WalletConnect signing (free from cloud.walletconnect.com)
 ```

@@ -484,12 +484,14 @@ configCmd
   Keys:
     swap       auto, cow, uniswap, lifi
     bridge     auto, debridge, lifi
+    signer     env, wc
 
   Default: auto (compare all providers, select interactively)
 
   Examples:
     config set swap cow
     config set bridge lifi
+    config set signer wc
 `)
   .action(async (key: string, value: string) => {
     const { configSetCommand } = await import('./commands/config.js');
@@ -503,6 +505,43 @@ configCmd
     const { configResetCommand } = await import('./commands/config.js');
     configResetCommand();
   });
+
+// wallet connect
+program
+  .command('connect')
+  .description('Connect a wallet via WalletConnect (MetaMask, Phantom)')
+  .action(timed(async () => {
+    const { connectCommand } = await import('./commands/connect.js');
+    await connectCommand();
+  }));
+
+// wallet disconnect
+program
+  .command('disconnect')
+  .description('Disconnect WalletConnect session')
+  .action(timed(async () => {
+    const { disconnectCommand } = await import('./commands/connect.js');
+    await disconnectCommand();
+  }));
+
+// wallet keys [list]
+const keysCmd = program
+  .command('keys')
+  .description('Show signing keys and WalletConnect sessions');
+
+keysCmd
+  .action(timed(async () => {
+    const { keysListCommand } = await import('./commands/connect.js');
+    await keysListCommand();
+  }));
+
+keysCmd
+  .command('list')
+  .description('List signing keys and WalletConnect sessions')
+  .action(timed(async () => {
+    const { keysListCommand } = await import('./commands/connect.js');
+    await keysListCommand();
+  }));
 
 // Strip bare "run"/"dry-run" from argv so commander doesn't see them as extra positional args.
 // getDryRun() reads from _rawArgv (saved before stripping). --run/--dry-run are handled by commander's .option().

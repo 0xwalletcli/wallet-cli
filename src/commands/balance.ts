@@ -2,7 +2,8 @@ import { parseAbi } from 'viem';
 import { PublicKey } from '@solana/web3.js';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { type Network, TOKENS, SOLANA_CONFIG, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, EXPLORERS, STAKING_URLS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmAccount, getSolanaAddress } from '../config.js';
+import { type Network, TOKENS, SOLANA_CONFIG, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, EXPLORERS, STAKING_URLS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getERC20Balance } from '../lib/evm.js';
 import { getConnection, getSolBalance, getSplTokenBalance, getWsolBalance } from '../lib/solana.js';
 import { formatToken, formatAddress, formatUSD, link } from '../lib/format.js';
@@ -213,9 +214,10 @@ export async function balanceCommand(network: Network, target?: string, full = f
   }
 
   // Full dashboard for own wallet
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const evmAddress = account.address;
-  const solAddress = getSolanaAddress();
+  const solAddress = await signer.getSolanaAddress();
   const explorer = EXPLORERS[network];
   const tokens = TOKENS[network];
   const lido = LIDO_CONFIG[network];

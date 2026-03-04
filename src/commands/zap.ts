@@ -1,11 +1,12 @@
-import { PublicKey, Transaction, LAMPORTS_PER_SOL, sendAndConfirmTransaction, VersionedTransaction } from '@solana/web3.js';
+import { PublicKey, Transaction, LAMPORTS_PER_SOL, VersionedTransaction } from '@solana/web3.js';
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction, getAccount } from '@solana/spl-token';
 import { depositSol, getStakePoolAccount } from '@solana/spl-stake-pool';
 import {
   type Network, TOKENS, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG,
   SOLANA_MINTS, JUPITER_CONFIG, EXPLORERS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID,
-  HISTORY_LIMIT, getEvmAccount, getSolanaKeypair, getSolanaAddress,
+  HISTORY_LIMIT,
 } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getWalletClient, resetWalletClient, getERC20Balance, getERC20Allowance, approveERC20, unwrapWeth, waitForReceipt, simulateTx } from '../lib/evm.js';
 import { getConnection, getSolBalance, getSplTokenBalance } from '../lib/solana.js';
 import { formatToken, formatUSD, formatAddress, parseTokenAmount, formatGasFee } from '../lib/format.js';
@@ -65,7 +66,8 @@ async function executeSwap(
   quote: SwapQuote,
   network: Network,
 ): Promise<{ filled: boolean; executedBuyAmount?: string; uid?: string }> {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const tokens = TOKENS[network];
 
   // Approve if needed
@@ -117,10 +119,11 @@ async function executeSwap(
 // ── Execution: Lido Stake ───────────────────────────
 
 async function executeLidoStake(amountWei: bigint, network: Network): Promise<boolean> {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const lido = LIDO_CONFIG[network];
   const explorer = EXPLORERS[network];
-  const wallet = getWalletClient(network);
+  const wallet = await getWalletClient(network);
   const { trackTx, clearTx } = await import('../lib/txtracker.js');
 
   try {
@@ -155,7 +158,8 @@ async function executeBridgeTx(
   usdcRaw: bigint,
   network: Network,
 ): Promise<{ confirmed: boolean; orderId: string }> {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const tokens = TOKENS[network];
   const explorer = EXPLORERS[network];
   const txData = provider.getTxData(quote);
@@ -189,7 +193,7 @@ async function executeBridgeTx(
 
   console.log('  Sending bridge transaction...');
   const { trackTx, clearTx } = await import('../lib/txtracker.js');
-  const wallet = getWalletClient(network);
+  const wallet = await getWalletClient(network);
   const hash = await wallet.sendTransaction({
     account,
     to: txData.to as `0x${string}`,
@@ -229,7 +233,9 @@ async function executeJupiterSwap(
   usdcRawSol: string,
   network: Network,
 ): Promise<{ success: boolean; signature?: string }> {
-  const keypair = getSolanaKeypair();
+  const signer = await resolveSigner();
+  const walletAddr = await signer.getSolanaAddress();
+  if (!walletAddr) throw new Error('No Solana address configured');
   const explorer = EXPLORERS[network];
 
   // Get fresh quote
@@ -256,7 +262,7 @@ async function executeJupiterSwap(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userPublicKey: keypair.publicKey.toBase58(),
+        userPublicKey: walletAddr,
         quoteResponse: quote,
       }),
     }),
@@ -269,11 +275,11 @@ async function executeJupiterSwap(
   const conn = getConnection(network);
   const txBuf = Buffer.from(swapTransaction, 'base64');
   const tx = VersionedTransaction.deserialize(txBuf);
-  tx.sign([keypair]);
+  const signed = await signer.signSolanaVersionedTransaction(tx);
 
   console.log('  Sending Jupiter swap...');
   const { trackTx, clearTx } = await import('../lib/txtracker.js');
-  const signature = await conn.sendTransaction(tx);
+  const signature = await conn.sendTransaction(signed);
   trackTx(signature, 'solana', network);
   console.log(`  TX:  ${signature}`);
   console.log(`  URL: ${explorer.solana}/tx/${signature}`);
@@ -287,41 +293,51 @@ async function executeJupiterSwap(
 // ── Execution: Jito Stake ───────────────────────────
 
 async function executeJitoStake(amount: number, network: Network): Promise<boolean> {
-  const keypair = getSolanaKeypair();
+  const signer = await resolveSigner();
+  const walletAddr = await signer.getSolanaAddress();
+  if (!walletAddr) throw new Error('No Solana address configured');
+  const userPubkey = new PublicKey(walletAddr);
   const conn = getConnection(network);
   const explorer = EXPLORERS[network];
   const stakePoolAddr = new PublicKey(JITO_CONFIG.stakePool);
   const jitoSolMint = new PublicKey(JITO_CONFIG.jitoSolMint);
 
   // Ensure JitoSOL ATA exists
-  const ata = getAssociatedTokenAddressSync(jitoSolMint, keypair.publicKey);
+  const ata = getAssociatedTokenAddressSync(jitoSolMint, userPubkey);
   try {
     await getAccount(conn, ata);
   } catch {
     console.log('  Creating JitoSOL token account...');
     const createAtaIx = createAssociatedTokenAccountInstruction(
-      keypair.publicKey, ata, keypair.publicKey, jitoSolMint,
+      userPubkey, ata, userPubkey, jitoSolMint,
     );
     const ataTx = new Transaction().add(createAtaIx);
-    await sendAndConfirmTransaction(conn, ataTx, [keypair]);
+    await signer.signAndSendSolanaTransaction(conn, ataTx);
   }
 
   // Deposit SOL
   const lamports = Math.round(amount * LAMPORTS_PER_SOL);
   console.log(`  Depositing ${formatToken(amount, 4)} SOL into Jito stake pool...`);
-  const { instructions } = await depositSol(
+  const { instructions, signers: ephemeralSigners } = await depositSol(
     conn,
     stakePoolAddr,
-    keypair.publicKey,
+    userPubkey,
     lamports,
   );
 
   const tx = new Transaction();
   for (const ix of instructions) tx.add(ix);
 
+  // Partial-sign with ephemeral signers before user signs
+  if (ephemeralSigners.length > 0) {
+    tx.recentBlockhash = (await conn.getLatestBlockhash()).blockhash;
+    tx.feePayer = userPubkey;
+    tx.partialSign(...ephemeralSigners);
+  }
+
   console.log('  Sending Jito stake transaction...');
   try {
-    const sig = await sendAndConfirmTransaction(conn, tx, [keypair]);
+    const sig = await signer.signAndSendSolanaTransaction(conn, tx);
     console.log(`  TX:  ${sig}`);
     console.log(`  URL: ${explorer.solana}/tx/${sig}`);
     console.log('  Jito stake confirmed!');
@@ -335,7 +351,8 @@ async function executeJitoStake(amount: number, network: Network): Promise<boole
 // ── stETH Zap ───────────────────────────────────────
 
 async function zapSteth(amount: string, network: Network, dryRun: boolean, providerFlag?: string) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const tokens = TOKENS[network];
   const usdcAmount = Number(amount);
   const usdcRaw = parseTokenAmount(amount, tokens.USDC_DECIMALS);
@@ -537,7 +554,7 @@ async function zapSteth(amount: string, network: Network, dryRun: boolean, provi
   // CoW Swap settles to native ETH; LI.FI routes to native ETH; others give WETH
   if (provider.id !== 'cow' && provider.id !== 'lifi') {
     const tokens = TOKENS[network];
-    const wethBal = await getERC20Balance(network, tokens.WETH, getEvmAccount().address);
+    const wethBal = await getERC20Balance(network, tokens.WETH, account.address);
     if (wethBal > 0n) {
       console.log(`  Unwrapping ${formatToken(Number(wethBal) / 1e18, 6)} WETH -> ETH...`);
       const unwrapHash = await unwrapWeth(network, wethBal);
@@ -596,9 +613,10 @@ async function zapJitosol(amount: string, network: Network, dryRun: boolean, pat
     return;
   }
 
-  const account = getEvmAccount();
-  const keypair = getSolanaKeypair();
-  const solAddress = keypair.publicKey.toBase58();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
+  const solAddress = await signer.getSolanaAddress();
+  if (!solAddress) { console.error('  No Solana address configured.'); return; }
   const tokens = TOKENS[network];
   const usdcAmount = Number(amount);
   const usdcRaw = parseTokenAmount(amount, tokens.USDC_DECIMALS);
@@ -824,7 +842,8 @@ async function executeJitosolPath1(
   jitoRate: number,
   solAddress: string,
 ) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const evmTracker = new BalanceTracker(evmTokens(network, account.address, ['USDC', 'ETH']));
   const solTracker = new BalanceTracker(solTokens(network, solAddress, ['SOL', 'JitoSOL']));
   await Promise.all([evmTracker.snapshot(), solTracker.snapshot()]);
@@ -890,7 +909,8 @@ async function executeJitosolPath2(
   jitoRate: number,
   solAddress: string,
 ) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const evmTracker = new BalanceTracker(evmTokens(network, account.address, ['USDC', 'ETH']));
   const solTracker = new BalanceTracker(solTokens(network, solAddress, ['USDC', 'SOL', 'JitoSOL']));
   await Promise.all([evmTracker.snapshot(), solTracker.snapshot()]);
@@ -1161,7 +1181,8 @@ async function fetchLidoStakes(network: Network, explorer: { evm: string }): Pro
   const apiKey = process.env.ETHERSCAN_API_KEY;
   if (!apiKey) return [];
 
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const lido = LIDO_CONFIG[network];
 
   const params = new URLSearchParams({
@@ -1208,8 +1229,9 @@ async function fetchLidoStakes(network: Network, explorer: { evm: string }): Pro
 
 async function fetchBridgeZapOrders(): Promise<HistoryEntry[]> {
   const allProviders = listBridgeProviders();
-  const account = getEvmAccount();
-  const solAddr = getSolanaAddress();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
+  const solAddr = await signer.getSolanaAddress();
 
   const results = await Promise.allSettled(
     allProviders.map(p => p.getHistory(account.address, solAddr || undefined)),
@@ -1247,7 +1269,8 @@ async function fetchBridgeZapOrders(): Promise<HistoryEntry[]> {
 
 async function fetchJitoStakes(network: Network): Promise<HistoryEntry[]> {
   if (network === 'testnet') return [];
-  const solAddress = getSolanaAddress();
+  const signer = await resolveSigner();
+  const solAddress = await signer.getSolanaAddress();
   if (!solAddress) return [];
 
   const conn = getConnection(network);

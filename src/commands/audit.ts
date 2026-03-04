@@ -1,7 +1,8 @@
 import { PublicKey } from '@solana/web3.js';
 import { parseAbi } from 'viem';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
-import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmAccount } from '../config.js';
+import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient } from '../lib/evm.js';
 import { getConnection } from '../lib/solana.js';
 import { type ServiceCheck, type AuditRecord, type AuditPrices, loadAudit, saveAudit } from '../lib/auditgate.js';
@@ -95,7 +96,7 @@ async function getMarketPrices(): Promise<{ eth: number | null; sol: number | nu
 
 async function getCowEthPrice(network: Network): Promise<{ price: number; fee: number }> {
   let fromAddress = '0x0000000000000000000000000000000000000001';
-  try { fromAddress = getEvmAccount().address; } catch {}
+  try { fromAddress = (await (await resolveSigner()).getEvmAccount()).address; } catch {}
 
   const cow = COW_CONFIG[network];
   const tokens = TOKENS[network];
@@ -171,7 +172,7 @@ async function getDeBridgeSolPrice(): Promise<{ price: number; solReceived: numb
 
 async function getCowWsolPrice(network: Network): Promise<{ price: number; fee: number }> {
   let fromAddress = '0x0000000000000000000000000000000000000001';
-  try { fromAddress = getEvmAccount().address; } catch {}
+  try { fromAddress = (await (await resolveSigner()).getEvmAccount()).address; } catch {}
 
   const cow = COW_CONFIG[network];
   const tokens = TOKENS[network];

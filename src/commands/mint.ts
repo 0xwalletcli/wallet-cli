@@ -1,5 +1,6 @@
 import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
-import { type Network, FAUCET_URLS, getEvmAccount, getSolanaAddress } from '../config.js';
+import { type Network, FAUCET_URLS } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getConnection, getSolBalance } from '../lib/solana.js';
 import { formatToken } from '../lib/format.js';
 import { validateAmount } from '../lib/prompt.js';
@@ -34,9 +35,9 @@ export async function mintCommand(first: string, network: Network, second?: stri
     validateAmount(amount);
     await mintSol(amount, network);
   } else if (token === 'ETH') {
-    mintEth();
+    await mintEth();
   } else if (token === 'USDC') {
-    mintUsdc();
+    await mintUsdc();
   } else {
     console.error('  Supported: sol (airdrop), eth (faucet), usdc (faucet)');
     process.exit(1);
@@ -44,9 +45,10 @@ export async function mintCommand(first: string, network: Network, second?: stri
 }
 
 async function mintSol(amount: string, network: Network) {
-  const address = getSolanaAddress();
+  const signer = await resolveSigner();
+  const address = await signer.getSolanaAddress();
   if (!address) {
-    console.error('  SOLANA_ADDRESS not set in .env');
+    console.error('  No Solana address configured.');
     process.exit(1);
   }
 
@@ -94,8 +96,9 @@ async function mintSol(amount: string, network: Network) {
   console.log(`\n  New balance: ${formatToken(balance, 6)} SOL\n`);
 }
 
-function mintEth() {
-  const account = getEvmAccount();
+async function mintEth() {
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   console.log(`\n  Get Sepolia ETH from a faucet:\n`);
   console.log(`  Wallet: ${account.address}\n`);
   console.log(`  Google Cloud:  ${FAUCET_URLS.eth}`);
@@ -104,8 +107,9 @@ function mintEth() {
   console.log(`  Paste your wallet address and request testnet ETH.\n`);
 }
 
-function mintUsdc() {
-  const account = getEvmAccount();
+async function mintUsdc() {
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   console.log(`\n  Get testnet USDC from Circle's faucet:\n`);
   console.log(`  Wallet: ${account.address}\n`);
   console.log(`  Circle Faucet: ${FAUCET_URLS.usdc}\n`);

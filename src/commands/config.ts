@@ -6,7 +6,7 @@ import {
 
 const SEP = '──────────────────────────────────────────';
 
-const DEFAULTS: Record<string, string> = { swapProvider: 'auto', bridgeProvider: 'auto' };
+const DEFAULTS: Record<string, string> = { swapProvider: 'auto', bridgeProvider: 'auto', signer: 'env' };
 
 export function configShowCommand(): void {
   const config = loadConfig();
@@ -14,13 +14,14 @@ export function configShowCommand(): void {
   console.log(`\n  ── Configuration ${SEP}\n`);
   console.log(`  swap:     ${config.swapProvider}${tag('swapProvider')}`);
   console.log(`  bridge:   ${config.bridgeProvider}${tag('bridgeProvider')}`);
+  console.log(`  signer:   ${config.signer}${tag('signer')}`);
   console.log(`\n  File: ${getConfigPath()}\n`);
 }
 
 export function configSetCommand(key: string, value: string): void {
   if (!validateConfigKey(key)) {
     console.error(`  Unknown config key: "${key}".`);
-    console.error('  Valid keys: swap, bridge');
+    console.error('  Valid keys: swap, bridge, signer');
     process.exit(1);
   }
 
@@ -33,13 +34,14 @@ export function configSetCommand(key: string, value: string): void {
   const config = loadConfig();
   if (key === 'swap') config.swapProvider = value;
   if (key === 'bridge') config.bridgeProvider = value;
+  if (key === 'signer') config.signer = value;
   saveConfig(config);
 
   console.log(`\n  Set ${key} = ${value}\n`);
 }
 
 export function configResetCommand(): void {
-  const defaults: WalletConfig = { swapProvider: 'auto', bridgeProvider: 'auto' };
+  const defaults: WalletConfig = { swapProvider: 'auto', bridgeProvider: 'auto', signer: 'env' };
   saveConfig(defaults);
   console.log('\n  Config reset to defaults (auto).\n');
 }

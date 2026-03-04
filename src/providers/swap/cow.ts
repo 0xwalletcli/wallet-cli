@@ -1,5 +1,6 @@
 import type { Network } from '../../config.js';
-import { COW_CONFIG, getEvmAccount } from '../../config.js';
+import { COW_CONFIG } from '../../config.js';
+import { resolveSigner } from '../../signers/index.js';
 import type { SwapProvider, SwapQuote, SwapResult, SwapOrderSummary } from '../types.js';
 import { registerSwapProvider } from '../registry.js';
 
@@ -123,7 +124,8 @@ const cowSwapProvider: SwapProvider = {
   },
 
   async signAndSubmit(quote: SwapQuote, network: Network): Promise<string> {
-    const account = getEvmAccount();
+    const signer = await resolveSigner();
+    const account = await signer.getEvmAccount();
     const cow = COW_CONFIG[network];
     const domain = getCowDomain(network);
 
@@ -212,7 +214,8 @@ const cowSwapProvider: SwapProvider = {
   },
 
   async getHistory(network: Network): Promise<SwapOrderSummary[]> {
-    const account = getEvmAccount();
+    const signer = await resolveSigner();
+    const account = await signer.getEvmAccount();
     const cow = COW_CONFIG[network];
 
     const res = await fetch(`${cow.api}/api/v1/account/${account.address}/orders?limit=10`);
@@ -270,7 +273,8 @@ const COW_CANCEL_TYPES = {
 } as const;
 
 export async function cancelCowOrder(orderId: string, network: Network): Promise<void> {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const domain = getCowDomain(network);
   const cow = COW_CONFIG[network];
 
