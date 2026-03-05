@@ -288,8 +288,8 @@ wallet config set signer keystore:my-evm           # set default signer
 
 ### Phase 3: WalletConnect v2 — DONE
 
-- `wallet connect` — QR code in terminal → scan with MetaMask / Phantom
-- `wallet disconnect` — close session
+- `wallet connect [evm|solana]` — QR code in terminal → scan with MetaMask / Phantom (supports multiple sessions for both chains)
+- `wallet disconnect [wallet]` — close session(s) (by wallet name or all)
 - `wallet keys` — show env keys + WC sessions
 - `wallet config set signer wc` — set WC as default signer
 - EVM: custom viem `LocalAccount` via `toAccount()`, `eth_sendTransaction` + `eth_signTypedData_v4` via WC relay

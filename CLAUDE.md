@@ -72,7 +72,7 @@ src/
     walletconnect.ts    — WalletConnectSigner: signs via MetaMask/Phantom over WC v2 relay, session persistence (~/.wallet-cli/wc-sessions/)
     index.ts            — resolveSigner() factory: reads config/override, returns cached Signer singleton
   commands/
-    connect.ts          — `wallet connect` / `wallet disconnect` / `wallet keys` for WalletConnect pairing
+    connect.ts          — `wallet connect [evm|solana]` / `wallet disconnect [wallet]` / `wallet keys` for WalletConnect pairing (supports multiple sessions for MetaMask + Phantom simultaneously)
     config.ts           — `wallet config` / `config set` / `config reset` for provider preferences
     balance.ts          — multi-chain balance display. Default shows balances only; `full` adds staking dashboard (rates, APR/APY, earned, yields) + pending withdrawals. Supports external addresses/aliases, shows WSOL. Staked token labels link to Lido/Jito, wallet addresses link to explorers.
     value.ts            — `wallet value <amount> <token> [target]` USD pricing + cross-token conversion (e.g., `value 10000 usdc eth`). Staked assets show base+USD (stETH->ETH->USD, JitoSOL->SOL->USD). Gets stETH rate from Lido contract, JitoSOL rate from Jito pool.
@@ -217,5 +217,5 @@ SOLANA_RPC_URL=...          # optional, overrides default publicnode RPC
 ETHERSCAN_API_KEY=...       # optional, for transaction history + stake/unstake history
 UNISWAP_API_KEY=...         # required for Uniswap swaps (free key from developers.uniswap.org)
 LIFI_API_KEY=...            # optional, increases LI.FI rate limit (200 req/2hr → 200 req/min)
-WC_PROJECT_ID=...           # optional, required for WalletConnect signing (free from cloud.walletconnect.com)
+WC_PROJECT_ID=...           # optional, required for WalletConnect signing (free from cloud.reown.com)
 ```

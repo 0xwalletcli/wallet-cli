@@ -506,22 +506,36 @@ configCmd
     configResetCommand();
   });
 
-// wallet connect
+// wallet connect [chain]
 program
-  .command('connect')
+  .command('connect [chain]')
   .description('Connect a wallet via WalletConnect (MetaMask, Phantom)')
-  .action(timed(async () => {
+  .addHelpText('after', `
+  Usage:
+    wallet connect              Connect both EVM + Solana (or whichever is missing)
+    wallet connect evm          Connect EVM wallet only (MetaMask)
+    wallet connect solana       Connect Solana wallet only (Phantom)
+
+  You can connect MetaMask and Phantom separately to cover both chains.
+`)
+  .action(timed(async (chain?: string) => {
     const { connectCommand } = await import('./commands/connect.js');
-    await connectCommand();
+    await connectCommand(chain);
   }));
 
-// wallet disconnect
+// wallet disconnect [wallet]
 program
-  .command('disconnect')
-  .description('Disconnect WalletConnect session')
-  .action(timed(async () => {
+  .command('disconnect [wallet]')
+  .description('Disconnect WalletConnect session(s)')
+  .addHelpText('after', `
+  Usage:
+    wallet disconnect           Disconnect all sessions
+    wallet disconnect metamask  Disconnect MetaMask only
+    wallet disconnect phantom   Disconnect Phantom only
+`)
+  .action(timed(async (wallet?: string) => {
     const { disconnectCommand } = await import('./commands/connect.js');
-    await disconnectCommand();
+    await disconnectCommand(wallet);
   }));
 
 // wallet keys [list]

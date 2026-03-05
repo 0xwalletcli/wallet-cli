@@ -67,7 +67,6 @@ function loadSessions(): PersistedSession[] {
       if (data.expiry > now) {
         sessions.push(data);
       } else {
-        // Clean up expired
         try { unlinkSync(join(SESSION_DIR, file)); } catch { /* ignore */ }
       }
     } catch { /* ignore malformed */ }
@@ -82,11 +81,6 @@ function deleteSession(topic: string): void {
   }
 }
 
-function getActiveSession(): PersistedSession | null {
-  const sessions = loadSessions();
-  return sessions.length > 0 ? sessions[0] : null;
-}
-
 // ── SignClient singleton ──
 
 let _client: SignClient | null = null;
@@ -96,7 +90,7 @@ async function getClient(): Promise<SignClient> {
 
   const projectId = process.env.WC_PROJECT_ID;
   if (!projectId) {
-    throw new Error('WC_PROJECT_ID not set in .env — get a free ID at https://cloud.walletconnect.com');
+    throw new Error('WC_PROJECT_ID not set in .env — get a free ID at https://cloud.reown.com');
   }
 
   _client = await SignClient.init({
@@ -110,7 +104,6 @@ async function getClient(): Promise<SignClient> {
     },
   });
 
-  // Clean up sessions when wallet disconnects
   _client.on('session_delete', ({ topic }) => {
     deleteSession(topic);
   });
@@ -124,40 +117,90 @@ async function getClient(): Promise<SignClient> {
 
 // ── Connect / Disconnect ──
 
-export async function connectWallet(): Promise<void> {
+export async function connectWallet(chain?: string): Promise<void> {
   const projectId = process.env.WC_PROJECT_ID;
   if (!projectId) {
     console.error('  WC_PROJECT_ID not set in .env');
-    console.error('  Get a free project ID at https://cloud.walletconnect.com\n');
+    console.error('  Get a free project ID at https://cloud.reown.com\n');
     process.exit(1);
   }
 
-  const existing = getActiveSession();
-  if (existing) {
-    console.log(`  Already connected to ${existing.peerName}.`);
-    console.log('  Run "wallet disconnect" first to connect a different wallet.\n');
-    return;
+  // Determine what to connect based on chain arg and existing sessions
+  const sessions = loadSessions();
+  const hasEvm = sessions.some(s => s.evmAccounts.length > 0);
+  const hasSol = sessions.some(s => s.solanaAccounts.length > 0);
+
+  let connectEvm = false;
+  let connectSol = false;
+
+  if (chain === 'evm' || chain === 'ethereum' || chain === 'eth') {
+    if (hasEvm) {
+      const evmSession = sessions.find(s => s.evmAccounts.length > 0)!;
+      console.log(`  EVM already connected via ${evmSession.peerName}.`);
+      console.log('  Run "wallet disconnect" first to reconnect.\n');
+      return;
+    }
+    connectEvm = true;
+  } else if (chain === 'solana' || chain === 'sol') {
+    if (hasSol) {
+      const solSession = sessions.find(s => s.solanaAccounts.length > 0)!;
+      console.log(`  Solana already connected via ${solSession.peerName}.`);
+      console.log('  Run "wallet disconnect" first to reconnect.\n');
+      return;
+    }
+    connectSol = true;
+  } else {
+    // No chain specified — connect whatever is missing
+    if (hasEvm && hasSol) {
+      const evmSession = sessions.find(s => s.evmAccounts.length > 0)!;
+      const solSession = sessions.find(s => s.solanaAccounts.length > 0)!;
+      console.log(`  EVM:    connected via ${evmSession.peerName}`);
+      console.log(`  Solana: connected via ${solSession.peerName}`);
+      console.log('\n  Both chains connected. Run "wallet disconnect" to reconnect.\n');
+      return;
+    }
+    connectEvm = !hasEvm;
+    connectSol = !hasSol;
   }
 
-  console.log('  Connecting via WalletConnect...\n');
+  // Build namespaces based on what we're connecting
+  const requiredNamespaces: Record<string, any> = {};
+  const optionalNamespaces: Record<string, any> = {};
+
+  if (connectEvm && connectSol) {
+    // Connecting both — EVM required, Solana optional (MetaMask won't support Solana)
+    requiredNamespaces.eip155 = {
+      methods: ['eth_sendTransaction', 'personal_sign', 'eth_signTypedData_v4'],
+      chains: [...EVM_CHAINS],
+      events: ['chainChanged', 'accountsChanged'],
+    };
+    optionalNamespaces.solana = {
+      methods: ['solana_signTransaction', 'solana_signMessage'],
+      chains: [...SOL_CHAINS],
+      events: [],
+    };
+    console.log('  Connecting EVM + Solana via WalletConnect...\n');
+  } else if (connectEvm) {
+    requiredNamespaces.eip155 = {
+      methods: ['eth_sendTransaction', 'personal_sign', 'eth_signTypedData_v4'],
+      chains: [...EVM_CHAINS],
+      events: ['chainChanged', 'accountsChanged'],
+    };
+    console.log('  Connecting EVM via WalletConnect...\n');
+  } else if (connectSol) {
+    requiredNamespaces.solana = {
+      methods: ['solana_signTransaction', 'solana_signMessage'],
+      chains: [...SOL_CHAINS],
+      events: [],
+    };
+    console.log('  Connecting Solana via WalletConnect...\n');
+  }
 
   const client = await getClient();
 
   const { uri, approval } = await client.connect({
-    requiredNamespaces: {
-      eip155: {
-        methods: ['eth_sendTransaction', 'personal_sign', 'eth_signTypedData_v4'],
-        chains: [...EVM_CHAINS],
-        events: ['chainChanged', 'accountsChanged'],
-      },
-    },
-    optionalNamespaces: {
-      solana: {
-        methods: ['solana_signTransaction', 'solana_signMessage'],
-        chains: [...SOL_CHAINS],
-        events: [],
-      },
-    },
+    requiredNamespaces,
+    optionalNamespaces,
   });
 
   if (uri) {
@@ -194,26 +237,48 @@ export async function connectWallet(): Promise<void> {
   if (solAddr) console.log(`  Solana: ${solAddr}`);
   console.log(`  Wallet: ${session.peer?.metadata?.name ?? 'Unknown'}`);
   console.log(`  Expiry: ${new Date(session.expiry * 1000).toLocaleDateString()}\n`);
-  console.log('  Set as default signer: wallet config set signer wc\n');
+
+  // Hint next steps
+  if (connectEvm && !hasSol && !solAddr) {
+    console.log('  Tip: run "wallet connect solana" to also connect Phantom.\n');
+  } else if (connectSol && !hasEvm && !evmAddr) {
+    console.log('  Tip: run "wallet connect evm" to also connect MetaMask.\n');
+  } else {
+    console.log('  Set as default signer: wallet config set signer wc\n');
+  }
 }
 
-export async function disconnectWallet(): Promise<void> {
-  const session = getActiveSession();
-  if (!session) {
-    console.log('  No active WalletConnect session.\n');
+export async function disconnectWallet(target?: string): Promise<void> {
+  const sessions = loadSessions();
+  if (sessions.length === 0) {
+    console.log('  No active WalletConnect sessions.\n');
     return;
   }
 
-  try {
-    const client = await getClient();
-    await client.disconnect({
-      topic: session.topic,
-      reason: { code: 6000, message: 'User disconnected' },
-    });
-  } catch { /* session may already be dead */ }
+  // If target specified, find matching session by peer name
+  const toDisconnect = target
+    ? sessions.filter(s => s.peerName.toLowerCase().includes(target.toLowerCase()))
+    : sessions;
 
-  deleteSession(session.topic);
-  console.log(`  Disconnected from ${session.peerName}.\n`);
+  if (target && toDisconnect.length === 0) {
+    console.log(`  No session matching "${target}".`);
+    console.log(`  Active sessions: ${sessions.map(s => s.peerName).join(', ')}\n`);
+    return;
+  }
+
+  const client = await getClient();
+
+  for (const session of toDisconnect) {
+    try {
+      await client.disconnect({
+        topic: session.topic,
+        reason: { code: 6000, message: 'User disconnected' },
+      });
+    } catch { /* session may already be dead */ }
+    deleteSession(session.topic);
+    console.log(`  Disconnected from ${session.peerName}.`);
+  }
+  console.log('');
 
   const { resetSigner } = await import('./index.js');
   resetSigner();
@@ -228,31 +293,37 @@ export function listWcSessions(): WcSessionInfo[] {
   }));
 }
 
-// ── WalletConnectSigner ──
+// ── WalletConnectSigner (merges multiple sessions) ──
 
 export class WalletConnectSigner implements Signer {
   readonly type = 'walletconnect' as const;
   readonly label: string;
 
   private client: SignClient;
-  private session: PersistedSession;
+  private evmSession: PersistedSession | null;
+  private solSession: PersistedSession | null;
 
-  constructor(client: SignClient, session: PersistedSession) {
+  constructor(client: SignClient, sessions: PersistedSession[]) {
     this.client = client;
-    this.session = session;
-    this.label = `WalletConnect (${session.peerName})`;
+    this.evmSession = sessions.find(s => s.evmAccounts.length > 0) ?? null;
+    this.solSession = sessions.find(s => s.solanaAccounts.length > 0) ?? null;
+
+    const names = [...new Set(sessions.map(s => s.peerName))];
+    this.label = `WalletConnect (${names.join(' + ')})`;
   }
 
   // ── Addresses ──
 
   async getEvmAddress(): Promise<`0x${string}` | null> {
-    const acct = this.session.evmAccounts[0];
+    if (!this.evmSession) return null;
+    const acct = this.evmSession.evmAccounts[0];
     if (!acct) return null;
     return acct.split(':').pop() as `0x${string}`;
   }
 
   async getSolanaAddress(): Promise<string | null> {
-    const acct = this.session.solanaAccounts[0];
+    if (!this.solSession) return null;
+    const acct = this.solSession.solanaAccounts[0];
     if (!acct) return null;
     return acct.split(':').pop()!;
   }
@@ -260,12 +331,12 @@ export class WalletConnectSigner implements Signer {
   // ── EVM signing ──
 
   async getEvmAccount(): Promise<LocalAccount> {
-    const address = await this.getEvmAddress();
-    if (!address) throw new Error('No EVM account in WalletConnect session');
+    if (!this.evmSession) throw new Error('No EVM wallet connected. Run "wallet connect evm".');
+    const address = (await this.getEvmAddress())!;
 
-    const chainId = this.session.evmAccounts[0].split(':').slice(0, 2).join(':');
+    const chainId = this.evmSession.evmAccounts[0].split(':').slice(0, 2).join(':');
     const client = this.client;
-    const topic = this.session.topic;
+    const topic = this.evmSession.topic;
 
     return toAccount({
       address,
@@ -317,6 +388,7 @@ export class WalletConnectSigner implements Signer {
   }
 
   async getEvmWalletClient(chain: Chain, transport: HttpTransport): Promise<WalletClient<HttpTransport, Chain, LocalAccount>> {
+    if (!this.evmSession) throw new Error('No EVM wallet connected. Run "wallet connect evm".');
     const account = await this.getEvmAccount();
     const walletClient = createWalletClient({ account, chain, transport });
 
@@ -325,8 +397,8 @@ export class WalletConnectSigner implements Signer {
     // eth_sendTransaction which signs AND broadcasts from the wallet side.
     const address = account.address;
     const client = this.client;
-    const topic = this.session.topic;
-    const chainId = this.session.evmAccounts[0].split(':').slice(0, 2).join(':');
+    const topic = this.evmSession.topic;
+    const chainId = this.evmSession.evmAccounts[0].split(':').slice(0, 2).join(':');
 
     const originalSendTransaction = walletClient.sendTransaction;
     walletClient.sendTransaction = (async (args: any) => {
@@ -352,14 +424,14 @@ export class WalletConnectSigner implements Signer {
   // ── Solana signing ──
 
   async signSolanaVersionedTransaction(tx: VersionedTransaction): Promise<VersionedTransaction> {
-    const solAddr = await this.getSolanaAddress();
-    if (!solAddr) throw new Error('No Solana account in WalletConnect session');
+    if (!this.solSession) throw new Error('No Solana wallet connected. Run "wallet connect solana".');
+    const solAddr = (await this.getSolanaAddress())!;
 
     const serialized = Buffer.from(tx.serialize()).toString('base64');
-    const chainId = this.session.solanaAccounts[0].split(':').slice(0, 2).join(':');
+    const chainId = this.solSession.solanaAccounts[0].split(':').slice(0, 2).join(':');
 
     const result = await this.client.request<{ signature: string } | string>({
-      topic: this.session.topic,
+      topic: this.solSession.topic,
       chainId,
       request: {
         method: 'solana_signTransaction',
@@ -367,7 +439,6 @@ export class WalletConnectSigner implements Signer {
       },
     });
 
-    // Wallet may return signed tx bytes or just the signature
     if (typeof result === 'string') {
       return VersionedTransaction.deserialize(Buffer.from(result, 'base64'));
     }
@@ -380,8 +451,8 @@ export class WalletConnectSigner implements Signer {
   }
 
   async signAndSendSolanaTransaction(conn: Connection, tx: Transaction): Promise<string> {
-    const solAddr = await this.getSolanaAddress();
-    if (!solAddr) throw new Error('No Solana account in WalletConnect session');
+    if (!this.solSession) throw new Error('No Solana wallet connected. Run "wallet connect solana".');
+    const solAddr = (await this.getSolanaAddress())!;
 
     const feePayer = new PublicKey(solAddr);
     if (!tx.recentBlockhash) {
@@ -393,10 +464,10 @@ export class WalletConnectSigner implements Signer {
     }
 
     const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
-    const chainId = this.session.solanaAccounts[0].split(':').slice(0, 2).join(':');
+    const chainId = this.solSession.solanaAccounts[0].split(':').slice(0, 2).join(':');
 
     const result = await this.client.request<{ signature: string } | string>({
-      topic: this.session.topic,
+      topic: this.solSession.topic,
       chainId,
       request: {
         method: 'solana_signTransaction',
@@ -425,24 +496,32 @@ export class WalletConnectSigner implements Signer {
 // ── Factory (called by resolveSigner) ──
 
 export async function loadWalletConnectSigner(): Promise<WalletConnectSigner> {
-  const session = getActiveSession();
-  if (!session) {
-    console.error('  No active WalletConnect session.');
+  const sessions = loadSessions();
+  if (sessions.length === 0) {
+    console.error('  No active WalletConnect sessions.');
     console.error('  Run "wallet connect" to pair a wallet.\n');
     process.exit(1);
   }
 
   const client = await getClient();
 
-  // Verify session is still active on the relay
-  const activeSessions = client.session.getAll();
-  const live = activeSessions.find(s => s.topic === session.topic);
-  if (!live) {
-    console.error('  WalletConnect session no longer active on relay.');
+  // Verify at least one session is still active on the relay
+  const relaySessions = client.session.getAll();
+  const liveSessions = sessions.filter(s =>
+    relaySessions.some(rs => rs.topic === s.topic)
+  );
+
+  if (liveSessions.length === 0) {
+    console.error('  WalletConnect sessions no longer active on relay.');
     console.error('  Run "wallet connect" to pair a new wallet.\n');
-    deleteSession(session.topic);
+    for (const s of sessions) deleteSession(s.topic);
     process.exit(1);
   }
 
-  return new WalletConnectSigner(client, session);
+  // Clean up dead sessions
+  for (const s of sessions) {
+    if (!liveSessions.includes(s)) deleteSession(s.topic);
+  }
+
+  return new WalletConnectSigner(client, liveSessions);
 }

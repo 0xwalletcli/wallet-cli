@@ -1,11 +1,11 @@
-export async function connectCommand(): Promise<void> {
+export async function connectCommand(chain?: string): Promise<void> {
   const { connectWallet } = await import('../signers/walletconnect.js');
-  await connectWallet();
+  await connectWallet(chain);
 }
 
-export async function disconnectCommand(): Promise<void> {
+export async function disconnectCommand(target?: string): Promise<void> {
   const { disconnectWallet } = await import('../signers/walletconnect.js');
-  await disconnectWallet();
+  await disconnectWallet(target);
 }
 
 export async function keysListCommand(): Promise<void> {

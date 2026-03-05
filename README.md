@@ -24,31 +24,54 @@ CLI tool for managing crypto without centralized exchanges.
 ```bash
 npm install
 cp .env.example .env
+npm link                        # makes `wallet` available globally
 ```
+
+### Option A: Connect a wallet (recommended)
+
+Sign transactions with MetaMask or Phantom — private keys never touch disk.
+
+```bash
+# 1. Get a free project ID at https://cloud.reown.com
+#    Add it to .env:
+WC_PROJECT_ID=your-project-id
+
+# 2. Connect your wallets (scan QR code)
+wallet connect evm              # scan with MetaMask
+wallet connect solana           # scan with Phantom
+
+# 3. Set WalletConnect as your default signer
+wallet config set signer wc
+```
+
+### Option B: Use private keys in `.env`
+
+Store keys locally for fully offline signing.
 
 Edit `.env`:
 
 ```bash
-# Required — your Ethereum private key (never shared, stays local)
+# Ethereum private key (never shared, stays local)
 EVM_PRIVATE_KEY=0x...
 
-# Your Solana wallet — for balance checks, bridge recipient, and sending SOL
+# Solana wallet
 SOLANA_ADDRESS=...
-SOLANA_PRIVATE_KEY=...          # needed for send/stake/swap on Solana
+SOLANA_PRIVATE_KEY=...          # base58 encoded, needed for send/stake/swap on Solana
+```
 
-# Optional — custom RPC URLs (public endpoints used by default)
+### Optional settings (both options)
+
+```bash
+# Custom RPC URLs (public endpoints used by default)
 EVM_RPC_URL=
 SOLANA_RPC_URL=
 
-# Optional — for transaction history (free key at https://etherscan.io/apis)
+# Transaction history (free key at https://etherscan.io/apis)
 ETHERSCAN_API_KEY=
 
-# Optional — alternative swap providers (see Provider Architecture below)
+# Alternative swap providers
 UNISWAP_API_KEY=               # free key from https://developers.uniswap.org
 LIFI_API_KEY=                  # increases LI.FI rate limit (200 req/2hr → 200 req/min)
-
-# Optional — WalletConnect (sign via MetaMask/Phantom instead of .env keys)
-WC_PROJECT_ID=                 # free project ID from https://cloud.walletconnect.com
 ```
 
 ## Quick Start
@@ -250,8 +273,8 @@ wallet buy history             # recent buy orders
 | `wallet mint <token> [amount]` | Get testnet tokens — `mint eth`, `mint usdc` (faucet links), `mint sol 2` (airdrop) |
 | `wallet approve <token> <spender> <amt>` | ERC-20 approval helper |
 | `wallet cancel [orderId]` | Cancel a pending CoW Swap order |
-| `wallet connect` | Connect MetaMask/Phantom via WalletConnect (scan QR code) |
-| `wallet disconnect` | Disconnect WalletConnect session |
+| `wallet connect [chain]` | Connect wallet via WalletConnect (`connect evm`, `connect solana`, or both) |
+| `wallet disconnect [wallet]` | Disconnect WalletConnect session(s) (`disconnect metamask`, or all) |
 | `wallet keys` | Show signing keys status and WalletConnect sessions |
 | `wallet address add <name>` | Add to address book (`--evm`, `--solana`) |
 | `wallet address list` | List saved addresses |
