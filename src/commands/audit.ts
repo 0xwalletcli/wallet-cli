@@ -1,7 +1,7 @@
 import { PublicKey } from '@solana/web3.js';
-import { parseAbi } from 'viem';
+import { createPublicClient, http, parseAbi, type Chain } from 'viem';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
-import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID } from '../config.js';
+import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmRpcUrl, getEvmChain } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getPublicClient } from '../lib/evm.js';
 import { getConnection } from '../lib/solana.js';
@@ -262,6 +262,7 @@ export async function auditCommand(network: Network) {
   // ── Fire ALL network calls in parallel ──
 
   const evmStart = Date.now();
+  const baseStart = Date.now();
   const solStart = Date.now();
   const client = getPublicClient(network);
   const conn = getConnection(network);
@@ -274,13 +275,21 @@ export async function auditCommand(network: Network) {
   const spritzApiKey = process.env.SPRITZ_API_KEY;
 
   const [
-    evmBlock, solSlot, marketPrices,
+    evmBlock, baseBlock, solSlot, marketPrices,
     cowEth, cowWsol, jupSol, deBridgeSol,
     deBridgeStatus, etherscanCheck, stethRatio, lidoSupply, jitoPool,
     uniswapCheck, lifiCheck, spritzCheck,
   ] = await Promise.allSettled([
     // Infrastructure
     withTimeout(client.getBlockNumber(), TIMEOUT).then(block => ({ block, ms: Date.now() - evmStart })),
+    (async () => {
+      const baseClient = createPublicClient({
+        chain: getEvmChain(network, 'base') as Chain,
+        transport: http(getEvmRpcUrl(network, 'base')),
+      });
+      const block = await withTimeout(baseClient.getBlockNumber(), TIMEOUT);
+      return { block, ms: Date.now() - baseStart };
+    })(),
     withTimeout(conn.getSlot(), TIMEOUT).then(slot => ({ slot, ms: Date.now() - solStart })),
     // Market prices
     getMarketPrices(),
@@ -380,6 +389,14 @@ export async function auditCommand(network: Network) {
   } else {
     printCheck('EVM RPC', 'fail', evmBlock.reason?.message || 'failed');
     record('EVM RPC', 'fail', evmBlock.reason?.message || 'failed');
+  }
+
+  if (baseBlock.status === 'fulfilled') {
+    printCheck('Base RPC', 'ok', `Block #${baseBlock.value.block} (${baseBlock.value.ms}ms)`);
+    record('Base RPC', 'ok', `Block #${baseBlock.value.block} (${baseBlock.value.ms}ms)`);
+  } else {
+    printCheck('Base RPC', 'fail', baseBlock.reason?.message || 'failed');
+    record('Base RPC', 'fail', baseBlock.reason?.message || 'failed');
   }
 
   if (solSlot.status === 'fulfilled') {

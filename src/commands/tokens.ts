@@ -1,7 +1,7 @@
 import { parseAbi } from 'viem';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
-import { type Network, TOKENS, SOLANA_CONFIG, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, DEBRIDGE_CONFIG, COW_CONFIG, EXPLORERS } from '../config.js';
+import { type Network, type EvmChain, TOKENS, BASE_TOKENS, SOLANA_CONFIG, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, DEBRIDGE_CONFIG, COW_CONFIG, EXPLORERS } from '../config.js';
 import { getPublicClient } from '../lib/evm.js';
 import { getConnection } from '../lib/solana.js';
 import { formatToken, formatUSD } from '../lib/format.js';
@@ -62,9 +62,9 @@ async function getMarketPrices(): Promise<MarketPrices> {
 
 const ERC20_ABI = parseAbi(['function totalSupply() view returns (uint256)']);
 
-async function getErc20Supply(network: Network, address: string, decimals: number): Promise<number | null> {
+async function getErc20Supply(network: Network, address: string, decimals: number, chain?: EvmChain): Promise<number | null> {
   try {
-    const client = getPublicClient(network);
+    const client = getPublicClient(network, chain);
     const supply = await withTimeout(client.readContract({
       address: address as `0x${string}`,
       abi: ERC20_ABI,
@@ -88,6 +88,7 @@ async function getSplSupply(network: Network, mint: string): Promise<number | nu
 
 export async function tokensCommand(network: Network) {
   const tokens = TOKENS[network];
+  const baseTokensCfg = BASE_TOKENS[network];
   const solConfig = SOLANA_CONFIG[network];
   const lido = LIDO_CONFIG[network];
   const explorer = EXPLORERS[network];
@@ -100,6 +101,7 @@ export async function tokensCommand(network: Network) {
   const [
     prices,
     usdcSupply, wethSupply, wsolEthSupply, stethSupply,
+    baseUsdcSupply,
     solUsdcSupply, jitosolSupply,
     jitoPool,
   ] = await Promise.all([
@@ -109,6 +111,8 @@ export async function tokensCommand(network: Network) {
     getErc20Supply(network, tokens.WETH, tokens.WETH_DECIMALS),
     getErc20Supply(network, tokens.WSOL, tokens.WSOL_DECIMALS),
     getErc20Supply(network, lido.stETH, 18),
+    // Base ERC-20 supplies
+    getErc20Supply(network, baseTokensCfg.USDC, baseTokensCfg.USDC_DECIMALS, 'base'),
     // Solana SPL supplies
     getSplSupply(network, solConfig.usdcMint),
     network === 'mainnet' ? getSplSupply(network, JITO_CONFIG.jitoSolMint) : Promise.resolve(null),
@@ -175,6 +179,24 @@ export async function tokensCommand(network: Network) {
   console.log(`      Decimals: 18`);
   printSupplyLine(stethSupply, 'stETH', ethPrice);
   console.log(`      Explorer: ${explorer.evm}/token/${lido.stETH}`);
+
+  // Base tokens
+  console.log(`\n  ── Base Tokens ${SEP}`);
+
+  // ETH-BASE
+  console.log(`\n    ETH-BASE — Ether on Base (Native gas token)`);
+  console.log(`      CLI name: eth-base`);
+  console.log(`      Address:  (native)`);
+  console.log(`      Decimals: 18`);
+  if (ethPrice) console.log(`      Price:    ${formatUSD(ethPrice)}  (same as ETH)`);
+
+  // USDC-BASE
+  console.log(`\n    USDC-BASE — USD Coin on Base`);
+  console.log(`      CLI name: usdc-base`);
+  console.log(`      Address:  ${baseTokensCfg.USDC}`);
+  console.log(`      Decimals: ${baseTokensCfg.USDC_DECIMALS}`);
+  printSupplyLine(baseUsdcSupply, 'USDC', 1);
+  console.log(`      Explorer: ${explorer.base}/token/${baseTokensCfg.USDC}`);
 
   // Solana tokens
   console.log(`\n  ── Solana Tokens ${SEP}`);

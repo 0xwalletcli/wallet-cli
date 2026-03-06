@@ -65,7 +65,7 @@ npm install @solana/spl-token@0.4.12 @solana/spl-stake-pool@1.1.8
 ```
 src/
   index.ts              — entry point, commander setup, [args...] subcommand routing, timed() wrapper, audit gate
-  config.ts             — chain configs, token addresses, RPCs, explorer URLs, Jupiter/WSOL/HISTORY_LIMIT config
+  config.ts             — chain configs, token addresses, RPCs, explorer URLs, Jupiter/WSOL/HISTORY_LIMIT config. EvmChain type ('ethereum' | 'base'), BASE_CHAINS, BASE_TOKENS, BASESCAN_CHAIN_ID
   signers/
     types.ts            — Signer interface (getEvmAccount, signSolanaVersionedTransaction, etc.)
     env.ts              — EnvSigner: wraps .env private keys (EVM_PRIVATE_KEY, SOLANA_PRIVATE_KEY)
@@ -75,12 +75,12 @@ src/
   commands/
     connect.ts          — `wallet connect [evm [browser]]` / `wallet connect solana` / `wallet disconnect [evm|solana|wallet]` / `wallet keys` for wallet pairing (WC + browser, per-chain disconnect)
     config.ts           — `wallet config` / `config set` / `config reset` for provider preferences
-    balance.ts          — multi-chain balance display. Default shows balances only; `full` adds staking dashboard (rates, APR/APY, earned, yields) + pending withdrawals. Supports external addresses/aliases, shows WSOL. Staked token labels link to Lido/Jito, wallet addresses link to explorers.
+    balance.ts          — multi-chain balance display (Ethereum, Base, Solana). Default shows balances only; `full` adds staking dashboard (rates, APR/APY, earned, yields) + pending withdrawals. Supports external addresses/aliases, shows WSOL. Staked token labels link to Lido/Jito, wallet addresses link to explorers.
     value.ts            — `wallet value <amount> <token> [target]` USD pricing + cross-token conversion (e.g., `value 10000 usdc eth`). Staked assets show base+USD (stETH->ETH->USD, JitoSOL->SOL->USD). Gets stETH rate from Lido contract, JitoSOL rate from Jito pool.
-    swap.ts             — multi-provider swap: auto-compares CoW/Uniswap/LI.FI (EVM), Jupiter (Solana USDC<->SOL) + history/status
+    swap.ts             — multi-provider swap: auto-compares CoW/Uniswap/LI.FI (Ethereum), LI.FI (Base ETH-BASE<->USDC-BASE), Jupiter (Solana USDC<->SOL). Cross-chain pairs redirect to bridge. + history/status
     buy.ts              — buy tokens with USDC: Jupiter ExactOut (SOL), multi-provider buy orders (ETH, WSOL-ETH), wrap (WSOL)
-    bridge.ts           — multi-provider bridge: auto-compares deBridge/LI.FI, shows table, lets user select + history/status
-    send.ts             — send ETH/USDC/WSOL-ETH (Ethereum) or SOL/WSOL (Solana) to addresses or address book names
+    bridge.ts           — multi-provider bridge: auto-compares deBridge/LI.FI. Routes: Ethereum↔Solana, Ethereum↔Base, Base↔Solana. Shows table, lets user select + history/status
+    send.ts             — send ETH/USDC/WSOL-ETH (Ethereum), ETH-BASE/USDC-BASE (Base), or SOL/WSOL (Solana) to addresses or address book names
     stake.ts            — Lido stETH (ETH) and Jito JitoSOL (SOL) + history subcommand (parallel fetch, clickable tx links)
     unstake.ts          — Lido withdrawal request/claim (ETH) and Jito instant unstake (SOL) + history subcommand (parallel fetch, amounts, clickable tx links, pending Lido withdrawals)
     wrap.ts             — wrap/unwrap native assets: ETH <-> WETH (Ethereum), SOL <-> WSOL (Solana), partial unwrap for WETH
@@ -88,7 +88,7 @@ src/
     audit.ts            — comprehensive audit: prices (ETH, SOL, WSOL-ETH, USDC peg, stETH ratio), pools (Lido, Jito), APIs (CoW, Jupiter, deBridge, Uniswap, LI.FI, Etherscan), RPCs, netguard
     quote.ts            — compare up to 6 DeFi paths (CoW/Uniswap/LI.FI+Lido, deBridge/LI.FI+Jito) for USDC -> staked assets, with yield projections per path
     zap.ts              — one-step USDC -> staked asset: `zap <amt> usdc steth` (multi-provider swap+Lido) or `zap <amt> usdc jitosol` (multi-provider bridge+Jito, 2 paths)
-    transactions.ts     — recent transaction history, command: `wallet txs` (Etherscan + Solana in parallel, resolves known Solana token mints)
+    transactions.ts     — recent transaction history, command: `wallet txs` (Etherscan Ethereum + Base + Solana in parallel, resolves known Solana token mints)
     tokens.ts           — supported token reference (addresses, decimals, explorer links, includes WSOL)
     health.ts           — service status dashboard (RPCs, APIs, staking APR/APY, prices)
     mint.ts             — testnet faucet (SOL airdrop programmatic, ETH/USDC print URLs)
@@ -147,10 +147,12 @@ swap, bridge, buy, stake, unstake, zap support subcommands via `[args...]` varia
 Default RPCs are publicnode (fast, free, no API key):
 - EVM mainnet: `ethereum-rpc.publicnode.com`
 - EVM testnet: `ethereum-sepolia-rpc.publicnode.com`
+- Base mainnet: `base-rpc.publicnode.com`
+- Base testnet: `base-sepolia-rpc.publicnode.com`
 - Solana mainnet: `solana-rpc.publicnode.com`
 - Solana testnet: `api.devnet.solana.com`
 
-Override with `EVM_RPC_URL` and `SOLANA_RPC_URL` env vars.
+Override with `EVM_RPC_URL`, `BASE_RPC_URL`, and `SOLANA_RPC_URL` env vars.
 
 ## Network Constraints
 
@@ -164,7 +166,8 @@ Override with `EVM_RPC_URL` and `SOLANA_RPC_URL` env vars.
 - ETH/USDC faucets: no programmatic API, `mint` prints URLs
 - CoW Swap: works on both mainnet and Sepolia
 - Uniswap: works on both mainnet and Sepolia, requires UNISWAP_API_KEY
-- LI.FI/Jumper: swap (same-chain) and bridge (cross-chain), sell-only (no ExactOutput/buy orders)
+- LI.FI/Jumper: swap (same-chain, Ethereum + Base) and bridge (cross-chain), sell-only (no ExactOutput/buy orders)
+- Base chain: same EVM wallet address as Ethereum, chain IDs 8453 (mainnet) / 84532 (testnet). Tokens: ETH-BASE (native), USDC-BASE. Swaps via LI.FI, bridges via deBridge/LI.FI
 - Off-ramp (multi-provider, WIP): Spritz Finance (mainnet, US, SPRITZ_API_KEY), Peer/ZKP2P (next, Base chain, decentralized P2P)
 - Audit gate: mainnet write commands require a passing audit within 7 days
 
@@ -210,7 +213,7 @@ See `FEATURES-LIST.md` for the full feature roadmap with research notes and impl
 
 ### Pending Features (in priority order)
 
-5. **Off-ramp: Peer/ZKP2P** — next off-ramp provider (decentralized P2P, non-custodial, no KYB, Base chain). Architecture ready, needs SDK integration.
+5. **Off-ramp: Peer/ZKP2P** — **NEXT** — off-ramp provider (decentralized P2P, non-custodial, no KYB, Base chain). Architecture ready, needs SDK integration. Base chain support now complete.
 6. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
 7. **Bill pay** — pay credit cards, mortgages, utilities via off-ramp provider (blocked on viable provider)
 8. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
@@ -220,9 +223,10 @@ See `FEATURES-LIST.md` for the full feature roadmap with research notes and impl
 ```
 EVM_PRIVATE_KEY=0x...       # required for EVM transactions
 SOLANA_PRIVATE_KEY=...      # base58, required for SOL send/stake/swap
-EVM_RPC_URL=...             # optional, overrides default publicnode RPC
-SOLANA_RPC_URL=...          # optional, overrides default publicnode RPC
-ETHERSCAN_API_KEY=...       # optional, for transaction history + stake/unstake history
+EVM_RPC_URL=...             # optional, overrides default Ethereum publicnode RPC
+BASE_RPC_URL=...            # optional, overrides default Base publicnode RPC
+SOLANA_RPC_URL=...          # optional, overrides default Solana publicnode RPC
+ETHERSCAN_API_KEY=...       # optional, for transaction history + stake/unstake history (Ethereum; Base requires paid Etherscan V2 plan)
 UNISWAP_API_KEY=...         # required for Uniswap swaps (free key from developers.uniswap.org)
 LIFI_API_KEY=...            # optional, increases LI.FI rate limit (200 req/2hr → 200 req/min)
 WC_PROJECT_ID=...           # optional, required for WalletConnect signing (free from cloud.reown.com)

@@ -2,17 +2,17 @@
 
 CLI tool for managing crypto without centralized exchanges.
 
-- **Balance** dashboard across Ethereum + Solana with USD values (`full` for staking details + pending withdrawals)
-- **Swap** tokens via [CoW Swap](https://cow.fi), [Uniswap](https://uniswap.org), or [LI.FI](https://li.fi) on Ethereum; [Jupiter](https://jup.ag) on Solana
+- **Balance** dashboard across Ethereum, Base, and Solana with USD values (`full` for staking details + pending withdrawals)
+- **Swap** tokens via [CoW Swap](https://cow.fi), [Uniswap](https://uniswap.org), or [LI.FI](https://li.fi) on Ethereum; [LI.FI](https://li.fi) on Base; [Jupiter](https://jup.ag) on Solana
 - **Buy** ETH, SOL, WSOL-ETH, or WSOL with USDC via [CoW Swap](https://cow.fi)/[Uniswap](https://uniswap.org)/[LI.FI](https://li.fi) (Ethereum) or [Jupiter](https://jup.ag) (Solana)
-- **Bridge** ETH/USDC/SOL both ways via [deBridge](https://debridge.finance) or [LI.FI](https://li.fi) (cross-chain USDC supported)
-- **Send** ETH, USDC, WSOL-ETH on Ethereum; SOL, WSOL on Solana
+- **Bridge** across Ethereum, Base, and Solana via [deBridge](https://debridge.finance) or [LI.FI](https://li.fi) (ETH/USDC cross-chain)
+- **Send** ETH, USDC, WSOL-ETH on Ethereum; ETH-BASE, USDC-BASE on Base; SOL, WSOL on Solana
 - **Stake** ETH via [Lido](https://lido.fi) (~3% APR), SOL via [Jito](https://jito.network) (~7% APR)
 - **Unstake** stETH (Lido withdrawal queue, 1-5 days) or JitoSOL (Jito instant)
 - **Zap** USDC into staked assets in one step — stETH (swap+Lido) or JitoSOL (bridge+Jito)
 - **Value** any token in USD, or convert between tokens (`wallet value 10000 usdc eth`)
 - **Quote** compare end-to-end costs across multiple DeFi paths with yield projections
-- **Transactions** history across Ethereum + Solana with clickable explorer links
+- **Transactions** history across Ethereum, Base, and Solana with clickable explorer links
 - **Wrap/Unwrap** native assets: ETH ↔ WETH, SOL ↔ WSOL
 - **Audit** all integrations before mainnet transactions (prices, pools, contracts, APIs)
 - **Withdraw** USDC to your bank account (off-ramp, multi-provider — no CEX)
@@ -70,10 +70,11 @@ SOLANA_PRIVATE_KEY=...          # base58 encoded, needed for send/stake/swap on 
 ```bash
 # Custom RPC URLs (public endpoints used by default)
 EVM_RPC_URL=
+BASE_RPC_URL=
 SOLANA_RPC_URL=
 
 # Transaction history (free key at https://etherscan.io/apis)
-ETHERSCAN_API_KEY=
+ETHERSCAN_API_KEY=               # Ethereum txs; Base txs require paid Etherscan V2 plan
 
 # Alternative swap providers
 UNISWAP_API_KEY=               # free key from https://developers.uniswap.org
@@ -154,6 +155,10 @@ wallet swap 0.5 eth usdc --run
 wallet swap 500 usdc wsol-eth --run
 wallet swap 5 wsol-eth eth --run
 
+# Base swaps (LI.FI)
+wallet swap 500 usdc-base eth-base --run
+wallet swap 0.1 eth-base usdc-base --run
+
 # Solana swaps (Jupiter)
 wallet swap 100 usdc sol --run
 wallet swap 1 sol usdc --run
@@ -163,20 +168,22 @@ wallet buy 1 eth --run
 wallet buy 10 sol --run
 ```
 
-### 5. Get SOL
+### 5. Bridge across chains
 
 ```bash
-# Option A: Swap USDC -> SOL on Solana (Jupiter, cheapest)
-wallet swap 5000 usdc sol --run
-
-# Option B: Bridge USDC -> SOL directly (deBridge, one step)
+# Ethereum <-> Solana
 wallet bridge 5000 usdc sol --run
-
-# Option C: Bridge ETH -> SOL
 wallet bridge 1 eth sol --run
-
-# Option D: Bridge to a specific recipient
 wallet bridge 1 eth sol --to phantom --run
+
+# Ethereum <-> Base
+wallet bridge 1000 usdc usdc-base --run
+wallet bridge 0.5 eth eth-base --run
+wallet bridge 500 usdc-base usdc --run
+
+# Base <-> Solana
+wallet bridge 1000 usdc-base sol --run
+wallet bridge 5 sol usdc-base --run
 ```
 
 ### 6. Check values
@@ -184,7 +191,9 @@ wallet bridge 1 eth sol --to phantom --run
 ```bash
 # See USD value of any token amount
 wallet value 1 eth
+wallet value 0.5 eth-base
 wallet value 100 usdc
+wallet value 100 usdc-base
 wallet value 1.5 steth        # shows ETH + USD (stETH -> ETH -> USD)
 wallet value 10 jitosol       # shows SOL + USD (JitoSOL -> SOL -> USD)
 wallet value 5 wsol-eth
@@ -246,6 +255,8 @@ wallet withdraw history
 
 ```bash
 wallet send 0.5 eth coinbase-eth --run
+wallet send 0.1 eth-base coinbase-eth --run
+wallet send 100 usdc-base coinbase-eth --run
 wallet send 5 sol coinbase-sol --run
 wallet send 10 sol phantom --run
 ```
@@ -253,7 +264,7 @@ wallet send 10 sol phantom --run
 ### 12. Review
 
 ```bash
-wallet balance                 # balances across Ethereum + Solana
+wallet balance                 # balances across Ethereum, Base, and Solana
 wallet balance full            # include staking details + pending withdrawals
 wallet txs                     # recent transactions (all chains)
 wallet swap history            # recent swap orders
@@ -269,17 +280,17 @@ wallet withdraw history        # recent withdrawals
 
 | Command | Description |
 |---------|-------------|
-| `wallet balance [target]` | Show balances across Ethereum + Solana. Use `full` for staking details + pending withdrawals |
-| `wallet value <amt> <token>` | Show USD value of a token amount (staked assets show base + USD) |
-| `wallet swap <amt> <from> <to>` | Swap via CoW/Uniswap/LI.FI (Ethereum) or Jupiter (Solana) |
+| `wallet balance [target]` | Show balances across Ethereum, Base, and Solana. Use `full` for staking details + pending withdrawals |
+| `wallet value <amt> <token>` | Show USD value of a token amount (staked assets show base + USD). Supports eth-base, usdc-base |
+| `wallet swap <amt> <from> <to>` | Swap via CoW/Uniswap/LI.FI (Ethereum), LI.FI (Base), or Jupiter (Solana) |
 | `wallet swap history` | Recent swap orders (CoW + Uniswap + LI.FI + Jupiter) |
 | `wallet swap status <orderId>` | Check specific swap order |
 | `wallet buy <amt> <token>` | Buy tokens with USDC — multi-provider (eth, wsol-eth), Jupiter (sol), wrap (wsol) |
 | `wallet buy history` | Recent buy orders |
-| `wallet bridge <amt> <from> <to> [--to]` | Bridge via deBridge / LI.FI (ETH/USDC/SOL both ways, cross-chain USDC) |
+| `wallet bridge <amt> <from> <to> [--to]` | Bridge via deBridge / LI.FI (Ethereum↔Base, Ethereum↔Solana, Base↔Solana) |
 | `wallet bridge history` | Recent bridge orders (deBridge + LI.FI) |
 | `wallet bridge status <orderId>` | Check specific bridge order |
-| `wallet send <amt> <token> <recipient>` | Send to a wallet or address book name (eth, usdc, wsol-eth, sol, wsol) |
+| `wallet send <amt> <token> <recipient>` | Send to a wallet or address book name (eth, usdc, wsol-eth, eth-base, usdc-base, sol, wsol) |
 | `wallet stake <amt> <token>` | Liquid stake ETH (Lido) or SOL (Jito) |
 | `wallet stake history` | Recent staking transactions |
 | `wallet unstake <amt> <token>` | Unstake stETH (Lido) or JitoSOL (Jito) |
@@ -295,7 +306,7 @@ wallet withdraw history        # recent withdrawals
 | `wallet config reset` | Reset config to defaults (auto) |
 | `wallet audit` | Security audit of all integrations (required every 7 days for mainnet) |
 | `wallet health` | Check status of all RPCs, APIs, staking APR/APY, and asset prices |
-| `wallet txs [--limit N]` | Show recent transactions for your wallets (default 15) |
+| `wallet txs [--limit N]` | Show recent transactions across Ethereum, Base, and Solana (default 15) |
 | `wallet tokens` | Show supported tokens, addresses, and explorer links |
 | `wallet mint <token> [amount]` | Get testnet tokens — `mint eth`, `mint usdc` (faucet links), `mint sol 2` (airdrop) |
 | `wallet approve <token> <spender> <amt>` | ERC-20 approval helper |
@@ -317,6 +328,7 @@ wallet withdraw history        # recent withdrawals
 | USDC <-> ETH | Ethereum | CoW Swap / Uniswap / LI.FI |
 | USDC <-> WSOL-ETH | Ethereum | CoW Swap / Uniswap / LI.FI |
 | ETH <-> WSOL-ETH | Ethereum | CoW Swap / Uniswap / LI.FI |
+| ETH-BASE <-> USDC-BASE | Base | LI.FI |
 | USDC <-> SOL | Solana | Jupiter |
 
 ## Supported Bridge Routes
@@ -331,6 +343,14 @@ wallet withdraw history        # recent withdrawals
 | USDC-SOL -> USDC | deBridge / LI.FI |
 | USDC-SOL -> ETH | deBridge / LI.FI |
 | USDC-SOL -> SOL | deBridge / LI.FI |
+| ETH -> ETH-BASE | deBridge / LI.FI |
+| USDC -> USDC-BASE | deBridge / LI.FI |
+| ETH-BASE -> ETH | deBridge / LI.FI |
+| USDC-BASE -> USDC | deBridge / LI.FI |
+| ETH-BASE -> SOL | deBridge / LI.FI |
+| USDC-BASE -> SOL | deBridge / LI.FI |
+| SOL -> ETH-BASE | deBridge / LI.FI |
+| SOL -> USDC-BASE | deBridge / LI.FI |
 
 ## Global Flags
 
@@ -361,18 +381,19 @@ wallet withdraw history        # recent withdrawals
 
 | Action | Protocol | Mechanism |
 |--------|----------|-----------|
-| **Balance** | Multi-chain | Balances + staking dashboard (rates, APR/APY, USD, earned, yields) |
+| **Balance** | Multi-chain | Balances across Ethereum, Base, Solana + staking dashboard (rates, APR/APY, USD, earned, yields) |
 | **Value** | CoinGecko + DeFi Llama | USD pricing for any managed asset; staked assets resolve through base token |
-| **Swap (EVM)** | Multi-provider | CoW (gasless intent), Uniswap (AMM/UniswapX), LI.FI (aggregator) |
+| **Swap (Ethereum)** | Multi-provider | CoW (gasless intent), Uniswap (AMM/UniswapX), LI.FI (aggregator) |
+| **Swap (Base)** | LI.FI | ETH-BASE <-> USDC-BASE via LI.FI aggregator |
 | **Swap (Solana)** | Jupiter | USDC <-> SOL via Jupiter aggregator with dynamic slippage |
 | **Buy** | Multi-provider / Jupiter | Buy order (ETH, WSOL-ETH) or Jupiter ExactOut (SOL) |
-| **Bridge** | Multi-provider | deBridge (cross-chain DLN) or LI.FI (aggregator) |
+| **Bridge** | Multi-provider | deBridge or LI.FI (Ethereum↔Base, Ethereum↔Solana, Base↔Solana) |
 | **Stake ETH** | Lido | ETH -> stETH, auto-rebasing liquid staking (~3% APR) |
 | **Stake SOL** | Jito | SOL -> JitoSOL, liquid staking + MEV rewards (~7% APR) |
 | **Unstake ETH** | Lido | stETH -> request withdrawal (1-5 day queue) -> claim ETH |
 | **Unstake SOL** | Jito | JitoSOL -> SOL, instant via SPL stake pool |
 | **Withdraw** | Multi-provider | USDC -> fiat to bank account (off-ramp, configurable provider) |
-| **Send** | Direct transfer | ETH/ERC-20 or SOL/SPL transfer to any address |
+| **Send** | Direct transfer | ETH/ERC-20 (Ethereum), ETH-BASE/USDC-BASE (Base), or SOL/SPL (Solana) to any address |
 | **Wrap/Unwrap** | WETH / WSOL | Native assets (ETH/SOL) to ERC-20/SPL equivalents and back |
 | **Zap** | Multi-platform | USDC -> stETH (swap+Lido) or USDC -> JitoSOL (bridge+Jito) |
 | **Quote** | Multi-platform | 6 paths with yield projections across all providers |

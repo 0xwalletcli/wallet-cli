@@ -1,6 +1,6 @@
-import { type Network, TOKENS, COW_CONFIG, EXPLORERS, SOLANA_MINTS, HISTORY_LIMIT } from '../config.js';
+import { type Network, TOKENS, BASE_TOKENS, LIFI_CONFIG, COW_CONFIG, EXPLORERS, SOLANA_MINTS, HISTORY_LIMIT } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
-import { getPublicClient, getERC20Balance, getERC20Allowance, approveERC20, unwrapWeth, waitForReceipt } from '../lib/evm.js';
+import { getPublicClient, getWalletClient, getERC20Balance, getERC20Allowance, approveERC20, unwrapWeth, waitForReceipt, simulateTx } from '../lib/evm.js';
 import { getConnection, getSolBalance, getSplTokenBalance } from '../lib/solana.js';
 import { getJupiterQuote, buildAndSendJupiterSwap, getSolanaMint, getSolanaDecimals } from '../lib/jupiter.js';
 import { parseTokenAmount, formatToken, formatAddress, formatGasFee } from '../lib/format.js';
@@ -8,7 +8,7 @@ import { confirm, select, validateAmount, warnMainnet, warnDryRun } from '../lib
 import { resolveSwapProvider } from '../lib/config.js';
 import { getSwapProvider, listSwapProviders } from '../providers/registry.js';
 import type { SwapProvider, SwapQuote } from '../providers/types.js';
-import { BalanceTracker, evmTokens, solTokens } from '../lib/balancedelta.js';
+import { BalanceTracker, evmTokens, baseTokens, solTokens } from '../lib/balancedelta.js';
 
 const SEP = '──────────────────────────────────────────';
 const QUOTE_TIMEOUT = 15_000;
@@ -54,13 +54,37 @@ export async function swapCommand(
     return;
   }
 
+  // Cross-chain pairs → redirect to bridge
+  const crossChainPairs = new Set([
+    'USDC-USDC-BASE', 'USDC-BASE-USDC', 'ETH-ETH-BASE', 'ETH-BASE-ETH',
+    'ETH-USDC-BASE', 'USDC-ETH-BASE', 'ETH-BASE-USDC', 'USDC-BASE-ETH',
+    'USDC-USDC-SOL', 'USDC-SOL-USDC', 'ETH-SOL', 'SOL-ETH',
+    'USDC-BASE-SOL', 'SOL-USDC-BASE', 'ETH-BASE-SOL', 'SOL-ETH-BASE',
+  ]);
+  if (crossChainPairs.has(`${from}-${to}`)) {
+    console.error(`  ${from} -> ${to} is a cross-chain operation. Use bridge instead:`);
+    console.error(`    wallet bridge ${amount} ${from.toLowerCase()} ${to.toLowerCase()}`);
+    process.exit(1);
+  }
+
   if (isAll) {
     console.error('  "all" is only supported for Solana swaps (usdc<->sol) currently.');
     process.exit(1);
   }
 
+  // Same-chain Base swaps (ETH-BASE <-> USDC-BASE) via LI.FI
+  const basePairs = new Set(['ETH-BASE-USDC-BASE', 'USDC-BASE-ETH-BASE']);
+  if (basePairs.has(`${from}-${to}`)) {
+    await swapBase(amount, from, to, network, dryRun, providerFlag);
+    return;
+  }
+
   if (!['USDC', 'ETH', 'WSOL-ETH'].includes(from) || !['USDC', 'ETH', 'WSOL-ETH'].includes(to)) {
-    console.error('  Supported pairs: usdc<->eth, usdc<->wsol-eth, eth<->wsol-eth, usdc<->sol');
+    console.error('  Supported pairs:');
+    console.error('    Ethereum: usdc<->eth, usdc<->wsol-eth, eth<->wsol-eth');
+    console.error('    Solana:   usdc<->sol');
+    console.error('    Base:     eth-base<->usdc-base');
+    console.error('    Cross-chain: use "wallet bridge" command');
     process.exit(1);
   }
 
@@ -465,6 +489,160 @@ async function swapSolana(amount: string, from: string, to: string, network: Net
   console.log('  Waiting for confirmation...');
   const conn = getConnection(network);
   await conn.confirmTransaction(signature);
+  clearTx();
+  await tracker.snapshotAndPrint('Swap');
+  console.log('');
+}
+
+// ── Base swap (LI.FI same-chain) ──
+
+async function swapBase(amount: string, from: string, to: string, network: Network, dryRun: boolean, providerFlag?: string) {
+  if (network === 'testnet') {
+    console.error('  Base swaps only support mainnet currently.');
+    process.exit(1);
+  }
+
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
+  const baseTokensCfg = BASE_TOKENS[network];
+  const explorer = EXPLORERS[network];
+
+  const isFromEth = from === 'ETH-BASE';
+  const sellDecimals = isFromEth ? 18 : baseTokensCfg.USDC_DECIMALS;
+  const buyDecimals = isFromEth ? baseTokensCfg.USDC_DECIMALS : 18;
+  const sellAmount = BigInt(Math.round(Number(amount) * 10 ** sellDecimals));
+
+  const NATIVE_ETH_LIFI = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
+  const sellToken = isFromEth ? NATIVE_ETH_LIFI : baseTokensCfg.USDC;
+  const buyToken = isFromEth ? baseTokensCfg.USDC : NATIVE_ETH_LIFI;
+
+  if (dryRun) warnDryRun();
+  console.log(`  Swap: ${amount} ${from} -> ${to}`);
+  console.log(`  Chain: Base ${network}`);
+  console.log(`  Wallet: ${account.address}`);
+  console.log(`  Via: LI.FI`);
+  warnMainnet(network, dryRun);
+  console.log('  Checking balance...');
+
+  let insufficientBalance = false;
+  if (isFromEth) {
+    const client = getPublicClient(network, 'base');
+    const balance = await client.getBalance({ address: account.address });
+    const gasBuffer = BigInt(0.001e18);
+    if (balance < sellAmount + gasBuffer) {
+      console.log(`  Insufficient ETH on Base (have: ${formatToken(Number(balance) / 1e18, 6)}, need: ${amount} + gas)`);
+      insufficientBalance = true;
+    }
+  } else {
+    const balance = await getERC20Balance(network, baseTokensCfg.USDC, account.address, 'base');
+    if (balance < sellAmount) {
+      console.log(`  Insufficient USDC on Base (have: ${formatToken(Number(balance) / 1e6, 2)}, need: ${amount})`);
+      insufficientBalance = true;
+    }
+    const client = getPublicClient(network, 'base');
+    const ethBal = await client.getBalance({ address: account.address });
+    if (ethBal < BigInt(0.001e18)) {
+      console.log(`  Insufficient ETH on Base for gas`);
+      insufficientBalance = true;
+    }
+  }
+
+  // Fetch quote from LI.FI
+  console.log('  Fetching quote from LI.FI...');
+  const params = new URLSearchParams({
+    fromChain: '8453',
+    toChain: '8453',
+    fromToken: sellToken as string,
+    toToken: buyToken as string,
+    fromAmount: sellAmount.toString(),
+    fromAddress: account.address,
+    toAddress: account.address,
+    integrator: 'wallet-cli',
+    slippage: '0.01',
+  });
+
+  const headers: Record<string, string> = {};
+  const lifiKey = process.env.LIFI_API_KEY;
+  if (lifiKey) headers['x-lifi-api-key'] = lifiKey;
+
+  const res = await fetch(`${LIFI_CONFIG.api}/quote?${params}`, { headers });
+  if (!res.ok) {
+    const err = await res.text();
+    console.error(`  LI.FI quote failed: ${err}`);
+    process.exit(1);
+  }
+
+  const data = (await res.json()) as {
+    estimate: { toAmount: string; toAmountMin: string; executionDuration: number; approvalAddress: string };
+    action: { toToken: { decimals: number } };
+    transactionRequest: { to: string; data: string; value: string };
+  };
+
+  const outAmount = Number(data.estimate.toAmount) / 10 ** data.action.toToken.decimals;
+  const outDecimals = isFromEth ? 2 : 6;
+
+  console.log(`\n  You sell:    ${amount} ${from}`);
+  console.log(`  You receive: ~${formatToken(outAmount, outDecimals)} ${to}`);
+  console.log('');
+
+  const tracker = new BalanceTracker(baseTokens(network, account.address, ['ETH-BASE', 'USDC-BASE']));
+
+  if (dryRun) {
+    console.log('  [DRY RUN] Skipping execution.\n');
+    return;
+  }
+
+  await tracker.snapshot();
+  tracker.printBefore();
+
+  if (!await confirm(`Proceed?`)) {
+    console.log('  Cancelled.\n');
+    return;
+  }
+
+  if (insufficientBalance) {
+    console.log('  Insufficient balance — cannot execute.\n');
+    return;
+  }
+
+  // Approval for USDC sells
+  if (!isFromEth && data.estimate.approvalAddress) {
+    const spender = data.estimate.approvalAddress as `0x${string}`;
+    const allowance = await getERC20Allowance(network, baseTokensCfg.USDC, account.address, spender, 'base');
+    if (allowance < sellAmount) {
+      console.log(`\n  Approval needed: ${amount} USDC-BASE to LI.FI (${spender})`);
+      if (!await confirm('Approve?')) {
+        console.log('  Cancelled.\n');
+        return;
+      }
+      const MAX_UINT256 = 2n ** 256n - 1n;
+      await approveERC20(network, baseTokensCfg.USDC, spender, MAX_UINT256, 'base');
+    }
+  }
+
+  const txReq = data.transactionRequest;
+  await simulateTx(network, {
+    account: account.address,
+    to: txReq.to as `0x${string}`,
+    data: txReq.data as `0x${string}`,
+    value: BigInt(txReq.value || '0'),
+  }, 'base');
+
+  console.log('  Sending swap transaction on Base...');
+  const { trackTx, clearTx } = await import('../lib/txtracker.js');
+  const wallet = await getWalletClient(network, 'base');
+  const hash = await wallet.sendTransaction({
+    account,
+    to: txReq.to as `0x${string}`,
+    data: txReq.data as `0x${string}`,
+    value: BigInt(txReq.value || '0'),
+  });
+
+  trackTx(hash, 'evm', network);
+  console.log(`  TX:  ${hash}`);
+  console.log(`  URL: ${explorer.base}/tx/${hash}`);
+  console.log('  Waiting for confirmation...');
+  await waitForReceipt(network, hash, 'base');
   clearTx();
   await tracker.snapshotAndPrint('Swap');
   console.log('');

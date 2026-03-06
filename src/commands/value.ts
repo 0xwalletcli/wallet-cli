@@ -11,7 +11,7 @@ const STETH_ABI = parseAbi([
   'function getPooledEthByShares(uint256 sharesAmount) view returns (uint256)',
 ]);
 
-const SUPPORTED = ['eth', 'weth', 'sol', 'wsol', 'wsol-eth', 'usdc', 'steth', 'jitosol'];
+const SUPPORTED = ['eth', 'weth', 'eth-base', 'sol', 'wsol', 'wsol-eth', 'usdc', 'usdc-base', 'steth', 'jitosol'];
 
 async function getStEthRate(network: Network): Promise<number> {
   const lido = LIDO_CONFIG[network];
@@ -33,8 +33,9 @@ async function getJitoSolRate(network: Network): Promise<number> {
 }
 
 function getPriceKey(sym: string): string {
-  if (sym === 'weth' || sym === 'steth') return 'eth';
+  if (sym === 'weth' || sym === 'steth' || sym === 'eth-base') return 'eth';
   if (sym === 'wsol' || sym === 'wsol-eth' || sym === 'jitosol') return 'sol';
+  if (sym === 'usdc-base') return 'usdc';
   return sym;
 }
 

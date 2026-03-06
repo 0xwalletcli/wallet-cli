@@ -13,7 +13,7 @@ import type { Signer } from './types.js';
 const SESSION_DIR = join(homedir(), '.wallet-cli', 'wc-sessions');
 const RELAY_URL = 'wss://relay.walletconnect.com';
 
-const EVM_CHAINS = ['eip155:1', 'eip155:11155111'] as const;
+const EVM_CHAINS = ['eip155:1', 'eip155:11155111', 'eip155:8453', 'eip155:84532'] as const;
 const SOL_CHAINS = [
   'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp',   // mainnet
   'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1',   // devnet

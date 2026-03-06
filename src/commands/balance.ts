@@ -2,7 +2,7 @@ import { parseAbi } from 'viem';
 import { PublicKey } from '@solana/web3.js';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { type Network, TOKENS, SOLANA_CONFIG, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, EXPLORERS, STAKING_URLS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID } from '../config.js';
+import { type Network, TOKENS, BASE_TOKENS, SOLANA_CONFIG, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, EXPLORERS, STAKING_URLS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getERC20Balance } from '../lib/evm.js';
 import { getConnection, getSolBalance, getSplTokenBalance, getWsolBalance } from '../lib/solana.js';
@@ -128,6 +128,7 @@ async function fetchJitoDeposits(network: Network, address: string): Promise<num
 async function externalEvmBalance(network: Network, address: string, label?: string) {
   const explorer = EXPLORERS[network];
   const tokens = TOKENS[network];
+  const baseTokensCfg = BASE_TOKENS[network];
   const client = getPublicClient(network);
   const evmAddr = address as `0x${string}`;
 
@@ -154,6 +155,21 @@ async function externalEvmBalance(network: Network, address: string, label?: str
       console.log(`    WSOL-ETH: ${formatToken(wsolEthAmount, 6)}`);
     }
     console.log(`  Explorer: ${explorer.evm}/address/${address}`);
+  } catch (err: any) {
+    console.log(`  Failed to fetch (${err.shortMessage || err.message})`);
+  }
+
+  console.log(`\n  ── Base ${SEP}`);
+  console.log('  Fetching...');
+  try {
+    const baseClient = getPublicClient(network, 'base');
+    const [baseEthBal, baseUsdcBal] = await Promise.all([
+      baseClient.getBalance({ address: evmAddr }),
+      getERC20Balance(network, baseTokensCfg.USDC, evmAddr, 'base'),
+    ]);
+    console.log(`    ETH:      ${formatToken(Number(baseEthBal) / 1e18, 6)}`);
+    console.log(`    USDC:     ${formatToken(Number(baseUsdcBal) / 10 ** baseTokensCfg.USDC_DECIMALS, 2)}`);
+    console.log(`  Explorer: ${explorer.base}/address/${address}`);
   } catch (err: any) {
     console.log(`  Failed to fetch (${err.shortMessage || err.message})`);
   }
@@ -348,6 +364,40 @@ export async function balanceCommand(network: Network, target?: string, full = f
     evmLines.push(`  Failed to fetch (${err.shortMessage || err.message})`);
   }
 
+  // ── Fetch Base data (buffered) ──
+  const baseLines: string[] = [];
+  let baseTotalUsd = 0;
+  baseLines.push(`\n  ── Base ${SEP}`);
+  baseLines.push(`    Wallet:   ${link(`${explorer.base}/address/${evmAddress}`, evmAddress)}`);
+
+  try {
+    const baseClient = getPublicClient(network, 'base');
+    const baseTokensCfg = BASE_TOKENS[network];
+    const [baseEthBalance, baseUsdcBalance] = await Promise.all([
+      baseClient.getBalance({ address: evmAddress }),
+      getERC20Balance(network, baseTokensCfg.USDC, evmAddress, 'base'),
+    ]);
+
+    const prices = await pricesPromise;
+    const ethPrice = prices?.eth ?? 0;
+
+    const baseEthAmount = Number(baseEthBalance) / 1e18;
+    const baseUsdcAmount = Number(baseUsdcBalance) / 10 ** baseTokensCfg.USDC_DECIMALS;
+
+    const baseEthUsd = baseEthAmount * ethPrice;
+    const usdSuffix = (v: number) => ethPrice > 0 ? `  (${formatUSD(v)})` : '';
+
+    baseLines.push(`    ETH:      ${formatToken(baseEthAmount, 6)}${usdSuffix(baseEthUsd)}`);
+    baseLines.push(`    USDC:     ${formatToken(baseUsdcAmount, 2)}`);
+
+    baseTotalUsd = baseEthUsd + baseUsdcAmount;
+    if (ethPrice > 0) {
+      baseLines.push(`    Total:    ${formatUSD(baseTotalUsd)}`);
+    }
+  } catch (err: any) {
+    baseLines.push(`  Failed to fetch (${err.shortMessage || err.message})`);
+  }
+
   // ── Fetch Solana data (buffered) ──
   solLines.push(`\n  ── Solana ${SEP}`);
 
@@ -518,11 +568,14 @@ export async function balanceCommand(network: Network, target?: string, full = f
   // ── Display: Ethereum balances (shown third) ──
   for (const line of evmLines) console.log(line);
 
-  // ── Display: Solana balances (shown fourth) ──
+  // ── Display: Base balances (shown fourth) ──
+  for (const line of baseLines) console.log(line);
+
+  // ── Display: Solana balances (shown fifth) ──
   for (const line of solLines) console.log(line);
 
   // ── Grand Total ──
-  const grandTotal = evmTotalUsd + solTotalUsd;
+  const grandTotal = evmTotalUsd + baseTotalUsd + solTotalUsd;
   if (grandTotal > 0) {
     console.log(`\n  ── Grand Total ${SEP}`);
     console.log(`  ${formatUSD(grandTotal)}`);

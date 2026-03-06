@@ -1,5 +1,5 @@
 import { VersionedTransaction } from '@solana/web3.js';
-import { type Network, DEBRIDGE_CONFIG, TOKENS, EXPLORERS, SOLANA_CONFIG, HISTORY_LIMIT } from '../config.js';
+import { type Network, type EvmChain, DEBRIDGE_CONFIG, TOKENS, BASE_TOKENS, EXPLORERS, SOLANA_CONFIG, HISTORY_LIMIT } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getERC20Balance, getERC20Allowance, approveERC20, getWalletClient, waitForReceipt, simulateTx } from '../lib/evm.js';
 import { getConnection, getSolBalance, getSplTokenBalance } from '../lib/solana.js';
@@ -9,31 +9,53 @@ import { confirm, select, validateAmount, warnMainnet, warnDryRun } from '../lib
 import { resolveBridgeProvider } from '../lib/config.js';
 import { getBridgeProvider, listBridgeProviders } from '../providers/registry.js';
 import type { BridgeProvider, BridgeQuote } from '../providers/types.js';
-import { BalanceTracker, evmTokens, solTokens } from '../lib/balancedelta.js';
+import { BalanceTracker, evmTokens, baseTokens, solTokens } from '../lib/balancedelta.js';
 
 const SEP = '──────────────────────────────────────────';
 const QUOTE_TIMEOUT = 15_000;
 
-type Direction = 'evm-to-solana' | 'solana-to-evm';
+type Direction = 'evm-to-solana' | 'solana-to-evm' | 'evm-to-base' | 'base-to-evm' | 'base-to-solana' | 'solana-to-base';
 
 interface RouteInfo {
   direction: Direction;
-  srcToken: string; // 'ETH' | 'USDC' | 'SOL'
-  dstToken: string; // 'ETH' | 'USDC' | 'SOL'
+  srcToken: string;
+  dstToken: string;
 }
 
 function detectRoute(from: string, to: string): RouteInfo | null {
-  // Existing routes
+  // Ethereum -> Solana
   if (from === 'ETH' && to === 'SOL') return { direction: 'evm-to-solana', srcToken: 'ETH', dstToken: 'SOL' };
   if (from === 'USDC' && to === 'SOL') return { direction: 'evm-to-solana', srcToken: 'USDC', dstToken: 'SOL' };
+  if (from === 'USDC' && to === 'USDC-SOL') return { direction: 'evm-to-solana', srcToken: 'USDC', dstToken: 'USDC' };
+
+  // Solana -> Ethereum
   if (from === 'SOL' && to === 'ETH') return { direction: 'solana-to-evm', srcToken: 'SOL', dstToken: 'ETH' };
   if (from === 'SOL' && to === 'USDC') return { direction: 'solana-to-evm', srcToken: 'SOL', dstToken: 'USDC' };
-
-  // USDC cross-chain routes using USDC-SOL token identifier
-  if (from === 'USDC' && to === 'USDC-SOL') return { direction: 'evm-to-solana', srcToken: 'USDC', dstToken: 'USDC' };
   if (from === 'USDC-SOL' && to === 'USDC') return { direction: 'solana-to-evm', srcToken: 'USDC', dstToken: 'USDC' };
   if (from === 'USDC-SOL' && to === 'ETH') return { direction: 'solana-to-evm', srcToken: 'USDC', dstToken: 'ETH' };
   if (from === 'USDC-SOL' && to === 'SOL') return { direction: 'solana-to-evm', srcToken: 'USDC', dstToken: 'SOL' };
+
+  // Ethereum -> Base
+  if (from === 'ETH' && to === 'ETH-BASE') return { direction: 'evm-to-base', srcToken: 'ETH', dstToken: 'ETH' };
+  if (from === 'USDC' && to === 'USDC-BASE') return { direction: 'evm-to-base', srcToken: 'USDC', dstToken: 'USDC' };
+  if (from === 'ETH' && to === 'USDC-BASE') return { direction: 'evm-to-base', srcToken: 'ETH', dstToken: 'USDC' };
+  if (from === 'USDC' && to === 'ETH-BASE') return { direction: 'evm-to-base', srcToken: 'USDC', dstToken: 'ETH' };
+
+  // Base -> Ethereum
+  if (from === 'ETH-BASE' && to === 'ETH') return { direction: 'base-to-evm', srcToken: 'ETH', dstToken: 'ETH' };
+  if (from === 'USDC-BASE' && to === 'USDC') return { direction: 'base-to-evm', srcToken: 'USDC', dstToken: 'USDC' };
+  if (from === 'ETH-BASE' && to === 'USDC') return { direction: 'base-to-evm', srcToken: 'ETH', dstToken: 'USDC' };
+  if (from === 'USDC-BASE' && to === 'ETH') return { direction: 'base-to-evm', srcToken: 'USDC', dstToken: 'ETH' };
+
+  // Base -> Solana
+  if (from === 'ETH-BASE' && to === 'SOL') return { direction: 'base-to-solana', srcToken: 'ETH', dstToken: 'SOL' };
+  if (from === 'USDC-BASE' && to === 'SOL') return { direction: 'base-to-solana', srcToken: 'USDC', dstToken: 'SOL' };
+  if (from === 'USDC-BASE' && to === 'USDC-SOL') return { direction: 'base-to-solana', srcToken: 'USDC', dstToken: 'USDC' };
+
+  // Solana -> Base
+  if (from === 'SOL' && to === 'ETH-BASE') return { direction: 'solana-to-base', srcToken: 'SOL', dstToken: 'ETH' };
+  if (from === 'SOL' && to === 'USDC-BASE') return { direction: 'solana-to-base', srcToken: 'SOL', dstToken: 'USDC' };
+  if (from === 'USDC-SOL' && to === 'USDC-BASE') return { direction: 'solana-to-base', srcToken: 'USDC', dstToken: 'USDC' };
 
   return null;
 }
@@ -61,13 +83,13 @@ export async function bridgeCommand(
   const route = detectRoute(from, to);
   if (!route) {
     console.error('  Supported bridges:');
-    console.error('    Ethereum -> Solana:  bridge <amt> eth sol');
-    console.error('                         bridge <amt> usdc sol');
-    console.error('                         bridge <amt> usdc usdc-sol');
-    console.error('    Solana -> Ethereum:  bridge <amt> sol eth');
-    console.error('                         bridge <amt> sol usdc');
-    console.error('                         bridge <amt> usdc-sol usdc');
-    console.error('                         bridge <amt> usdc-sol eth');
+    console.error('    Ethereum <-> Solana:  bridge <amt> eth sol, usdc sol, usdc usdc-sol');
+    console.error('                          bridge <amt> sol eth, sol usdc, usdc-sol usdc');
+    console.error('    Ethereum <-> Base:    bridge <amt> eth eth-base, usdc usdc-base');
+    console.error('                          bridge <amt> eth-base eth, usdc-base usdc');
+    console.error('                          bridge <amt> eth usdc-base, usdc eth-base (cross-token)');
+    console.error('    Base <-> Solana:      bridge <amt> usdc-base sol, eth-base sol');
+    console.error('                          bridge <amt> sol eth-base, sol usdc-base');
     process.exit(1);
   }
 
@@ -78,8 +100,16 @@ export async function bridgeCommand(
 
   if (route.direction === 'evm-to-solana') {
     await bridgeEvmToSolana(amount, route.srcToken, route.dstToken, network, dryRun, recipient, providerFlag);
-  } else {
+  } else if (route.direction === 'solana-to-evm') {
     await bridgeSolanaToEvm(amount, route.srcToken, route.dstToken, network, dryRun, recipient, providerFlag);
+  } else if (route.direction === 'evm-to-base') {
+    await bridgeEvmToBase(amount, route.srcToken, route.dstToken, network, dryRun, providerFlag);
+  } else if (route.direction === 'base-to-evm') {
+    await bridgeBaseToEvm(amount, route.srcToken, route.dstToken, network, dryRun, providerFlag);
+  } else if (route.direction === 'base-to-solana') {
+    await bridgeBaseToSolana(amount, route.srcToken, route.dstToken, network, dryRun, recipient, providerFlag);
+  } else if (route.direction === 'solana-to-base') {
+    await bridgeSolanaToBase(amount, route.srcToken, route.dstToken, network, dryRun, recipient, providerFlag);
   }
 }
 
@@ -475,7 +505,11 @@ async function bridgeSolanaToEvm(
   const explorer = EXPLORERS[network];
   const conn = getConnection(network);
 
-  const txBytes = Buffer.from(txData.data.slice(2), 'hex');
+  // Provider may return hex (0x...) or base64 encoded tx data
+  const rawData = txData.data;
+  const txBytes = rawData.startsWith('0x')
+    ? Buffer.from(rawData.slice(2), 'hex')
+    : Buffer.from(rawData, 'base64');
   const tx = VersionedTransaction.deserialize(txBytes);
 
   // Update blockhash (API's may be stale by the time user confirms)
@@ -514,10 +548,684 @@ async function bridgeSolanaToEvm(
   }
 }
 
+// ── Ethereum → Base ──────────────────────────────────────────
+
+async function bridgeEvmToBase(
+  amount: string,
+  from: string,
+  to: string,
+  network: Network,
+  dryRun: boolean,
+  providerFlag?: string,
+) {
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
+
+  const db = DEBRIDGE_CONFIG;
+  const srcToken = from === 'ETH' ? db.tokens.nativeETH : db.tokens.USDC_ETH;
+  const dstToken = to === 'ETH' ? db.tokens.nativeETH : db.tokens.USDC_BASE;
+  const decimals = from === 'ETH' ? 18 : 6;
+  const srcAmount = parseTokenAmount(amount, decimals);
+  const dstLabel = to === 'ETH' ? 'ETH-BASE' : 'USDC-BASE';
+
+  if (dryRun) warnDryRun();
+  console.log(`  Bridge: ${amount} ${from} (Ethereum) -> ${dstLabel} (Base)`);
+  console.log(`  Chain:  Ethereum mainnet -> Base mainnet`);
+  console.log(`  From:   ${account.address}`);
+  console.log(`  To:     ${account.address} (same wallet on Base)`);
+  warnMainnet(network, dryRun);
+  console.log('  Checking balance...');
+
+  let insufficientBalance = false;
+  if (from === 'USDC') {
+    const balance = await getERC20Balance(network, TOKENS[network].USDC, account.address);
+    if (balance < srcAmount) {
+      console.log(`  ⚠ Insufficient USDC balance (have: ${formatToken(Number(balance) / 1e6, 2)}, need: ${amount})`);
+      insufficientBalance = true;
+    }
+  }
+
+  const client = getPublicClient(network);
+  const ethBalance = await client.getBalance({ address: account.address });
+  if (from === 'ETH') {
+    const gasBuffer = BigInt(0.005e18);
+    if (ethBalance < srcAmount + gasBuffer) {
+      console.log(`  ⚠ Insufficient ETH (have: ${formatToken(Number(ethBalance) / 1e18, 6)}, need: ${amount} + gas)`);
+      insufficientBalance = true;
+    }
+  } else {
+    const minEth = BigInt(0.005e18);
+    if (ethBalance < minEth) {
+      console.log(`  ⚠ Insufficient ETH for gas (have: ${formatToken(Number(ethBalance) / 1e18, 6)}, need: ~0.005 ETH)`);
+      insufficientBalance = true;
+    }
+  }
+
+  const { provider, quote } = await selectBridgeProvider({
+    srcChainId: '1',
+    dstChainId: '8453',
+    srcToken,
+    dstToken,
+    amount: srcAmount.toString(),
+    srcAddress: account.address,
+    dstAddress: account.address,
+  }, providerFlag);
+
+  const outAmount = Number(quote.dstAmount) / 10 ** quote.dstDecimals;
+  const outDecimals = dstLabel === 'USDC-BASE' ? 2 : 6;
+  const txValue = Number(quote.protocolFeeRaw) / 1e18;
+  const protocolFee = from === 'ETH' ? txValue - Number(amount) : txValue;
+
+  console.log(`\n  Provider:     ${provider.displayName}`);
+  console.log(`  You send:     ${amount} ${from} on Ethereum`);
+  console.log(`  You receive:  ~${formatToken(outAmount, outDecimals)} ${dstLabel} on Base`);
+  console.log(`  Protocol fee: ~${formatToken(protocolFee, 6)} ETH`);
+  console.log(`  Est. time:    ~${quote.estimatedTime}s`);
+  console.log(`  Order ID:     ${quote.orderId}`);
+  if (quote.contractAddress) console.log(`  Contract:     ${quote.contractAddress}`);
+  console.log('');
+
+  if (dryRun) {
+    console.log('  [DRY RUN] Skipping execution.\n');
+    return;
+  }
+
+  if (quote.contractAddress && !provider.knownContracts.has(quote.contractAddress.toLowerCase())) {
+    console.error(`  WARNING: Unknown contract address ${quote.contractAddress}`);
+    console.error(`  This does not match any known ${provider.displayName} contract.`);
+    if (!await confirm('This is unusual. Continue anyway?')) {
+      console.log('  Cancelled.\n');
+      return;
+    }
+  }
+
+  const evmTrackTokens = from === 'ETH' ? ['ETH'] : ['USDC', 'ETH'];
+  const baseTrackTokens = to === 'ETH' ? ['ETH-BASE'] : ['USDC-BASE'];
+  const evmTracker = new BalanceTracker(evmTokens(network, account.address, evmTrackTokens));
+  const baseTracker = new BalanceTracker(baseTokens(network, account.address, baseTrackTokens));
+  await Promise.all([evmTracker.snapshot(), baseTracker.snapshot()]);
+  evmTracker.printBefore();
+
+  if (!await confirm(`Proceed?`)) {
+    console.log('  Cancelled.\n');
+    return;
+  }
+
+  if (insufficientBalance) {
+    console.log('  Insufficient balance — cannot execute.\n');
+    return;
+  }
+
+  if (from === 'USDC') {
+    const spender = provider.getApprovalAddress(quote) as `0x${string}`;
+    if (spender) {
+      const allowance = await getERC20Allowance(network, TOKENS[network].USDC, account.address, spender);
+      if (allowance < srcAmount) {
+        console.log(`\n  Approval needed: ${amount} USDC to ${provider.displayName} (${spender})`);
+        if (!await confirm('Approve?')) {
+          console.log('  Cancelled.\n');
+          return;
+        }
+        const MAX_UINT256 = 2n ** 256n - 1n;
+        await approveERC20(network, TOKENS[network].USDC, spender, MAX_UINT256);
+      }
+    }
+  }
+
+  const txData = provider.getTxData(quote);
+  await simulateTx(network, {
+    account: account.address,
+    to: txData.to as `0x${string}`,
+    data: txData.data as `0x${string}`,
+    value: BigInt(txData.value!),
+  });
+
+  console.log('  Sending bridge transaction on Ethereum...');
+  const { trackTx, clearTx } = await import('../lib/txtracker.js');
+  const explorer = EXPLORERS[network];
+  const wallet = await getWalletClient(network);
+  const hash = await wallet.sendTransaction({
+    account: account,
+    to: txData.to as `0x${string}`,
+    data: txData.data as `0x${string}`,
+    value: BigInt(txData.value!),
+  });
+
+  trackTx(hash, 'evm', network);
+  console.log(`  TX:  ${hash}`);
+  console.log(`  URL: ${explorer.evm}/tx/${hash}`);
+  console.log('  Waiting for Ethereum confirmation...');
+  await waitForReceipt(network, hash);
+  clearTx();
+  console.log('  Transaction confirmed on Ethereum.');
+  console.log(`\n  Order: ${quote.orderId}\n`);
+
+  const pollId = provider.id === 'lifi' ? hash : quote.orderId;
+  console.log(`  Waiting for Base fulfillment...`);
+  const result = await provider.pollFulfillment(pollId);
+  if (result.status === 'fulfilled') {
+    console.log(`\n  Bridge complete! Status: fulfilled`);
+    if (result.dstTxHash) {
+      console.log(`  Base TX:  ${result.dstTxHash}`);
+      console.log(`  URL: ${explorer.base}/tx/${result.dstTxHash}`);
+    }
+    await evmTracker.snapshotAndPrint('Source: Ethereum');
+    await baseTracker.snapshotAndPrint('Destination: Base');
+    console.log('');
+  } else {
+    console.log('\n  Timed out. Check with: wallet bridge status ' + pollId + '\n');
+  }
+}
+
+// ── Base → Ethereum ──────────────────────────────────────────
+
+async function bridgeBaseToEvm(
+  amount: string,
+  from: string,
+  to: string,
+  network: Network,
+  dryRun: boolean,
+  providerFlag?: string,
+) {
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
+
+  const db = DEBRIDGE_CONFIG;
+  const srcToken = from === 'ETH' ? db.tokens.nativeETH : db.tokens.USDC_BASE;
+  const dstToken = to === 'ETH' ? db.tokens.nativeETH : db.tokens.USDC_ETH;
+  const decimals = from === 'ETH' ? 18 : 6;
+  const srcAmount = parseTokenAmount(amount, decimals);
+  const srcLabel = from === 'ETH' ? 'ETH-BASE' : 'USDC-BASE';
+
+  if (dryRun) warnDryRun();
+  console.log(`  Bridge: ${amount} ${srcLabel} (Base) -> ${to} (Ethereum)`);
+  console.log(`  Chain:  Base mainnet -> Ethereum mainnet`);
+  console.log(`  From:   ${account.address}`);
+  console.log(`  To:     ${account.address} (same wallet on Ethereum)`);
+  warnMainnet(network, dryRun);
+  console.log('  Checking balance...');
+
+  let insufficientBalance = false;
+  const baseTokensCfg = BASE_TOKENS[network];
+  if (from === 'USDC') {
+    const balance = await getERC20Balance(network, baseTokensCfg.USDC, account.address, 'base');
+    if (balance < srcAmount) {
+      console.log(`  ⚠ Insufficient USDC-BASE balance (have: ${formatToken(Number(balance) / 1e6, 2)}, need: ${amount})`);
+      insufficientBalance = true;
+    }
+  }
+
+  const baseClient = getPublicClient(network, 'base');
+  const baseEthBalance = await baseClient.getBalance({ address: account.address });
+  if (from === 'ETH') {
+    const gasBuffer = BigInt(0.001e18); // Base gas is cheap
+    if (baseEthBalance < srcAmount + gasBuffer) {
+      console.log(`  ⚠ Insufficient ETH on Base (have: ${formatToken(Number(baseEthBalance) / 1e18, 6)}, need: ${amount} + gas)`);
+      insufficientBalance = true;
+    }
+  } else {
+    const minEth = BigInt(0.001e18);
+    if (baseEthBalance < minEth) {
+      console.log(`  ⚠ Insufficient ETH on Base for gas (have: ${formatToken(Number(baseEthBalance) / 1e18, 6)}, need: ~0.001 ETH)`);
+      insufficientBalance = true;
+    }
+  }
+
+  const { provider, quote } = await selectBridgeProvider({
+    srcChainId: '8453',
+    dstChainId: '1',
+    srcToken,
+    dstToken,
+    amount: srcAmount.toString(),
+    srcAddress: account.address,
+    dstAddress: account.address,
+  }, providerFlag);
+
+  const outAmount = Number(quote.dstAmount) / 10 ** quote.dstDecimals;
+  const outDecimals = to === 'USDC' ? 2 : 6;
+  const txValue = Number(quote.protocolFeeRaw) / 1e18;
+  const protocolFee = from === 'ETH' ? txValue - Number(amount) : txValue;
+
+  console.log(`\n  Provider:     ${provider.displayName}`);
+  console.log(`  You send:     ${amount} ${srcLabel} on Base`);
+  console.log(`  You receive:  ~${formatToken(outAmount, outDecimals)} ${to} on Ethereum`);
+  console.log(`  Protocol fee: ~${formatToken(protocolFee, 6)} ETH`);
+  console.log(`  Est. time:    ~${quote.estimatedTime}s`);
+  console.log(`  Order ID:     ${quote.orderId}`);
+  if (quote.contractAddress) console.log(`  Contract:     ${quote.contractAddress}`);
+  console.log('');
+
+  if (dryRun) {
+    console.log('  [DRY RUN] Skipping execution.\n');
+    return;
+  }
+
+  if (quote.contractAddress && !provider.knownContracts.has(quote.contractAddress.toLowerCase())) {
+    console.error(`  WARNING: Unknown contract address ${quote.contractAddress}`);
+    console.error(`  This does not match any known ${provider.displayName} contract.`);
+    if (!await confirm('This is unusual. Continue anyway?')) {
+      console.log('  Cancelled.\n');
+      return;
+    }
+  }
+
+  const baseTrackTokens = from === 'ETH' ? ['ETH-BASE'] : ['USDC-BASE', 'ETH-BASE'];
+  const evmTrackTokens = to === 'ETH' ? ['ETH'] : ['USDC'];
+  const baseTracker = new BalanceTracker(baseTokens(network, account.address, baseTrackTokens));
+  const evmTracker = new BalanceTracker(evmTokens(network, account.address, evmTrackTokens));
+  await Promise.all([baseTracker.snapshot(), evmTracker.snapshot()]);
+  baseTracker.printBefore();
+
+  if (!await confirm(`Proceed?`)) {
+    console.log('  Cancelled.\n');
+    return;
+  }
+
+  if (insufficientBalance) {
+    console.log('  Insufficient balance — cannot execute.\n');
+    return;
+  }
+
+  if (from === 'USDC') {
+    const spender = provider.getApprovalAddress(quote) as `0x${string}`;
+    if (spender) {
+      const allowance = await getERC20Allowance(network, baseTokensCfg.USDC, account.address, spender, 'base');
+      if (allowance < srcAmount) {
+        console.log(`\n  Approval needed: ${amount} USDC-BASE to ${provider.displayName} (${spender})`);
+        if (!await confirm('Approve?')) {
+          console.log('  Cancelled.\n');
+          return;
+        }
+        const MAX_UINT256 = 2n ** 256n - 1n;
+        await approveERC20(network, baseTokensCfg.USDC, spender, MAX_UINT256, 'base');
+      }
+    }
+  }
+
+  const txData = provider.getTxData(quote);
+  await simulateTx(network, {
+    account: account.address,
+    to: txData.to as `0x${string}`,
+    data: txData.data as `0x${string}`,
+    value: BigInt(txData.value!),
+  }, 'base');
+
+  console.log('  Sending bridge transaction on Base...');
+  const { trackTx, clearTx } = await import('../lib/txtracker.js');
+  const explorer = EXPLORERS[network];
+  const wallet = await getWalletClient(network, 'base');
+  const hash = await wallet.sendTransaction({
+    account: account,
+    to: txData.to as `0x${string}`,
+    data: txData.data as `0x${string}`,
+    value: BigInt(txData.value!),
+  });
+
+  trackTx(hash, 'evm', network);
+  console.log(`  TX:  ${hash}`);
+  console.log(`  URL: ${explorer.base}/tx/${hash}`);
+  console.log('  Waiting for Base confirmation...');
+  await waitForReceipt(network, hash, 'base');
+  clearTx();
+  console.log('  Transaction confirmed on Base.');
+  console.log(`\n  Order: ${quote.orderId}\n`);
+
+  const pollId = provider.id === 'lifi' ? hash : quote.orderId;
+  console.log(`  Waiting for Ethereum fulfillment...`);
+  const result = await provider.pollFulfillment(pollId);
+  if (result.status === 'fulfilled') {
+    console.log(`\n  Bridge complete! Status: fulfilled`);
+    if (result.dstTxHash) {
+      console.log(`  Ethereum TX:  ${result.dstTxHash}`);
+      console.log(`  URL: ${explorer.evm}/tx/${result.dstTxHash}`);
+    }
+    await baseTracker.snapshotAndPrint('Source: Base');
+    await evmTracker.snapshotAndPrint('Destination: Ethereum');
+    console.log('');
+  } else {
+    console.log('\n  Timed out. Check with: wallet bridge status ' + pollId + '\n');
+  }
+}
+
+// ── Base → Solana ──────────────────────────────────────────
+
+async function bridgeBaseToSolana(
+  amount: string,
+  from: string,
+  to: string,
+  network: Network,
+  dryRun: boolean,
+  recipient?: string,
+  providerFlag?: string,
+) {
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
+  let solAddress: string;
+
+  if (recipient) {
+    solAddress = resolveAddress(recipient, 'solana');
+  } else {
+    const addr = await signer.getSolanaAddress();
+    if (!addr) {
+      console.error('  No Solana address configured and no --recipient specified.');
+      process.exit(1);
+    }
+    solAddress = addr;
+  }
+
+  const db = DEBRIDGE_CONFIG;
+  const srcToken = from === 'ETH' ? db.tokens.nativeETH : db.tokens.USDC_BASE;
+  const dstToken = to === 'USDC' ? db.tokens.USDC_SOL : db.tokens.nativeSOL;
+  const decimals = from === 'ETH' ? 18 : 6;
+  const srcAmount = parseTokenAmount(amount, decimals);
+  const srcLabel = from === 'ETH' ? 'ETH-BASE' : 'USDC-BASE';
+  const dstLabel = to === 'USDC' ? 'USDC' : 'SOL';
+
+  if (dryRun) warnDryRun();
+  console.log(`  Bridge: ${amount} ${srcLabel} (Base) -> ${dstLabel} (Solana)`);
+  console.log(`  Chain:  Base mainnet -> Solana mainnet`);
+  console.log(`  From:   ${account.address}`);
+  console.log(`  To:     ${solAddress}`);
+  warnMainnet(network, dryRun);
+  console.log('  Checking balance...');
+
+  let insufficientBalance = false;
+  const baseTokensCfg = BASE_TOKENS[network];
+  if (from === 'USDC') {
+    const balance = await getERC20Balance(network, baseTokensCfg.USDC, account.address, 'base');
+    if (balance < srcAmount) {
+      console.log(`  ⚠ Insufficient USDC-BASE balance (have: ${formatToken(Number(balance) / 1e6, 2)}, need: ${amount})`);
+      insufficientBalance = true;
+    }
+  }
+
+  const baseClient = getPublicClient(network, 'base');
+  const baseEthBalance = await baseClient.getBalance({ address: account.address });
+  if (from === 'ETH') {
+    const gasBuffer = BigInt(0.001e18);
+    if (baseEthBalance < srcAmount + gasBuffer) {
+      console.log(`  ⚠ Insufficient ETH on Base (have: ${formatToken(Number(baseEthBalance) / 1e18, 6)}, need: ${amount} + gas)`);
+      insufficientBalance = true;
+    }
+  } else {
+    const minEth = BigInt(0.001e18);
+    if (baseEthBalance < minEth) {
+      console.log(`  ⚠ Insufficient ETH on Base for gas (have: ${formatToken(Number(baseEthBalance) / 1e18, 6)}, need: ~0.001 ETH)`);
+      insufficientBalance = true;
+    }
+  }
+
+  const { provider, quote } = await selectBridgeProvider({
+    srcChainId: '8453',
+    dstChainId: '7565164',
+    srcToken,
+    dstToken,
+    amount: srcAmount.toString(),
+    srcAddress: account.address,
+    dstAddress: solAddress,
+  }, providerFlag);
+
+  const outAmount = Number(quote.dstAmount) / 10 ** quote.dstDecimals;
+  const outDecimals = dstLabel === 'USDC' ? 2 : 6;
+  const txValue = Number(quote.protocolFeeRaw) / 1e18;
+  const protocolFee = from === 'ETH' ? txValue - Number(amount) : txValue;
+
+  console.log(`\n  Provider:     ${provider.displayName}`);
+  console.log(`  You send:     ${amount} ${srcLabel} on Base`);
+  console.log(`  You receive:  ~${formatToken(outAmount, outDecimals)} ${dstLabel} on Solana`);
+  console.log(`  Protocol fee: ~${formatToken(protocolFee, 6)} ETH`);
+  console.log(`  Est. time:    ~${quote.estimatedTime}s`);
+  console.log(`  Order ID:     ${quote.orderId}`);
+  if (quote.contractAddress) console.log(`  Contract:     ${quote.contractAddress}`);
+  console.log('');
+
+  if (dryRun) {
+    console.log('  [DRY RUN] Skipping execution.\n');
+    return;
+  }
+
+  if (quote.contractAddress && !provider.knownContracts.has(quote.contractAddress.toLowerCase())) {
+    console.error(`  WARNING: Unknown contract address ${quote.contractAddress}`);
+    console.error(`  This does not match any known ${provider.displayName} contract.`);
+    if (!await confirm('This is unusual. Continue anyway?')) {
+      console.log('  Cancelled.\n');
+      return;
+    }
+  }
+
+  const baseTrackTokens = from === 'ETH' ? ['ETH-BASE'] : ['USDC-BASE', 'ETH-BASE'];
+  const solTrackTokens = to === 'USDC' ? ['USDC'] : ['SOL'];
+  const baseTracker = new BalanceTracker(baseTokens(network, account.address, baseTrackTokens));
+  const solTracker = new BalanceTracker(solTokens(network, solAddress, solTrackTokens));
+  await Promise.all([baseTracker.snapshot(), solTracker.snapshot()]);
+  baseTracker.printBefore();
+
+  if (!await confirm(`Proceed?`)) {
+    console.log('  Cancelled.\n');
+    return;
+  }
+
+  if (insufficientBalance) {
+    console.log('  Insufficient balance — cannot execute.\n');
+    return;
+  }
+
+  if (from === 'USDC') {
+    const spender = provider.getApprovalAddress(quote) as `0x${string}`;
+    if (spender) {
+      const allowance = await getERC20Allowance(network, baseTokensCfg.USDC, account.address, spender, 'base');
+      if (allowance < srcAmount) {
+        console.log(`\n  Approval needed: ${amount} USDC-BASE to ${provider.displayName} (${spender})`);
+        if (!await confirm('Approve?')) {
+          console.log('  Cancelled.\n');
+          return;
+        }
+        const MAX_UINT256 = 2n ** 256n - 1n;
+        await approveERC20(network, baseTokensCfg.USDC, spender, MAX_UINT256, 'base');
+      }
+    }
+  }
+
+  const txData = provider.getTxData(quote);
+  await simulateTx(network, {
+    account: account.address,
+    to: txData.to as `0x${string}`,
+    data: txData.data as `0x${string}`,
+    value: BigInt(txData.value!),
+  }, 'base');
+
+  console.log('  Sending bridge transaction on Base...');
+  const { trackTx, clearTx } = await import('../lib/txtracker.js');
+  const explorer = EXPLORERS[network];
+  const wallet = await getWalletClient(network, 'base');
+  const hash = await wallet.sendTransaction({
+    account: account,
+    to: txData.to as `0x${string}`,
+    data: txData.data as `0x${string}`,
+    value: BigInt(txData.value!),
+  });
+
+  trackTx(hash, 'evm', network);
+  console.log(`  TX:  ${hash}`);
+  console.log(`  URL: ${explorer.base}/tx/${hash}`);
+  console.log('  Waiting for Base confirmation...');
+  await waitForReceipt(network, hash, 'base');
+  clearTx();
+  console.log('  Transaction confirmed on Base.');
+  console.log(`\n  Order: ${quote.orderId}\n`);
+
+  const pollId = provider.id === 'lifi' ? hash : quote.orderId;
+  console.log(`  Waiting for Solana fulfillment...`);
+  const result = await provider.pollFulfillment(pollId);
+  if (result.status === 'fulfilled') {
+    console.log(`\n  Bridge complete! Status: fulfilled`);
+    if (result.dstTxHash) {
+      console.log(`  Solana TX:  ${result.dstTxHash}`);
+      console.log(`  URL: ${explorer.solana}/tx/${result.dstTxHash}`);
+    }
+    await baseTracker.snapshotAndPrint('Source: Base');
+    await solTracker.snapshotAndPrint('Destination: Solana');
+    console.log('');
+  } else {
+    console.log('\n  Timed out. Check with: wallet bridge status ' + pollId + '\n');
+  }
+}
+
+// ── Solana → Base ──────────────────────────────────────────
+
+async function bridgeSolanaToBase(
+  amount: string,
+  from: string,
+  to: string,
+  network: Network,
+  dryRun: boolean,
+  recipient?: string,
+  providerFlag?: string,
+) {
+  const signer = await resolveSigner();
+  const solAddress = await signer.getSolanaAddress();
+  if (!solAddress) { console.error('  No Solana address configured.'); process.exit(1); }
+
+  // Destination is Base (same EVM address)
+  let evmAddress: string;
+  if (recipient) {
+    evmAddress = resolveAddress(recipient, 'evm');
+  } else {
+    const account = await signer.getEvmAccount();
+    evmAddress = account.address;
+  }
+
+  const db = DEBRIDGE_CONFIG;
+  const isSrcUsdc = from === 'USDC';
+  const srcToken = isSrcUsdc ? db.tokens.USDC_SOL : db.tokens.nativeSOL;
+  const dstToken = to === 'ETH' ? db.tokens.nativeETH : db.tokens.USDC_BASE;
+  const srcDecimals = isSrcUsdc ? 6 : 9;
+  const srcAmount = parseTokenAmount(amount, srcDecimals);
+  const srcLabel = isSrcUsdc ? 'USDC' : 'SOL';
+  const dstLabel = to === 'ETH' ? 'ETH-BASE' : 'USDC-BASE';
+
+  if (dryRun) warnDryRun();
+  console.log(`  Bridge: ${amount} ${srcLabel} (Solana) -> ${dstLabel} (Base)`);
+  console.log(`  Chain:  Solana mainnet -> Base mainnet`);
+  console.log(`  From:   ${solAddress}`);
+  console.log(`  To:     ${evmAddress}`);
+  warnMainnet(network, dryRun);
+  console.log('  Checking balance...');
+
+  let insufficientBalance = false;
+  const amountNum = Number(amount);
+  if (isSrcUsdc) {
+    const solConfig = SOLANA_CONFIG[network];
+    const usdcBal = await getSplTokenBalance(network, solAddress, solConfig.usdcMint);
+    if (usdcBal < amountNum) {
+      console.log(`  ⚠ Insufficient USDC (have: ${formatToken(usdcBal, 2)}, need: ${amount})`);
+      insufficientBalance = true;
+    }
+    const solBalance = await getSolBalance(network, solAddress);
+    if (solBalance < 0.01) {
+      console.log(`  ⚠ Insufficient SOL for fees (have: ${formatToken(solBalance, 6)}, need: ~0.01)`);
+      insufficientBalance = true;
+    }
+  } else {
+    const solBalance = await getSolBalance(network, solAddress);
+    const feeBuffer = 0.01;
+    if (solBalance < amountNum + feeBuffer) {
+      console.log(`  ⚠ Insufficient SOL (have: ${formatToken(solBalance, 6)}, need: ${amount} + ~${feeBuffer} fees)`);
+      insufficientBalance = true;
+    }
+  }
+
+  const { provider, quote } = await selectBridgeProvider({
+    srcChainId: '7565164',
+    dstChainId: '8453',
+    srcToken,
+    dstToken,
+    amount: srcAmount.toString(),
+    srcAddress: solAddress,
+    dstAddress: evmAddress,
+  }, providerFlag);
+
+  const outAmount = Number(quote.dstAmount) / 10 ** quote.dstDecimals;
+  const dstDecimals = to === 'ETH' ? 6 : 2;
+
+  console.log(`\n  Provider:     ${provider.displayName}`);
+  console.log(`  You send:     ${amount} ${srcLabel} on Solana`);
+  console.log(`  You receive:  ~${formatToken(outAmount, dstDecimals)} ${dstLabel} on Base`);
+  console.log(`  Est. time:    ~${quote.estimatedTime}s`);
+  console.log(`  Order ID:     ${quote.orderId}\n`);
+
+  if (dryRun) {
+    console.log('  [DRY RUN] Skipping execution.\n');
+    return;
+  }
+
+  const solTrackTokens = isSrcUsdc ? ['USDC', 'SOL'] : ['SOL'];
+  const baseTrackTokens = to === 'ETH' ? ['ETH-BASE'] : ['USDC-BASE'];
+  const solTracker = new BalanceTracker(solTokens(network, solAddress, solTrackTokens));
+  const baseTracker = new BalanceTracker(baseTokens(network, evmAddress as `0x${string}`, baseTrackTokens));
+  await Promise.all([solTracker.snapshot(), baseTracker.snapshot()]);
+  solTracker.printBefore();
+
+  if (!await confirm(`Proceed?`)) {
+    console.log('  Cancelled.\n');
+    return;
+  }
+
+  if (insufficientBalance) {
+    console.log('  Insufficient balance — cannot execute.\n');
+    return;
+  }
+
+  const txData = provider.getTxData(quote);
+  console.log('  Sending bridge transaction on Solana...');
+  const { trackTx, clearTx } = await import('../lib/txtracker.js');
+  const explorer = EXPLORERS[network];
+  const conn = getConnection(network);
+
+  // Provider may return hex (0x...) or base64 encoded tx data
+  const rawData = txData.data;
+  const txBytes = rawData.startsWith('0x')
+    ? Buffer.from(rawData.slice(2), 'hex')
+    : Buffer.from(rawData, 'base64');
+  const tx = VersionedTransaction.deserialize(txBytes);
+
+  const { blockhash } = await conn.getLatestBlockhash();
+  tx.message.recentBlockhash = blockhash;
+
+  const signed = await signer.signSolanaVersionedTransaction(tx);
+  const signature = await conn.sendTransaction(signed);
+
+  trackTx(signature, 'solana', network);
+  console.log(`  TX:  ${signature}`);
+  console.log(`  URL: ${explorer.solana}/tx/${signature}`);
+  console.log('  Waiting for Solana confirmation...');
+  await conn.confirmTransaction(signature);
+  clearTx();
+  console.log('  Transaction confirmed on Solana.');
+  console.log(`\n  Order: ${quote.orderId}\n`);
+
+  const pollId = provider.id === 'lifi' ? signature : quote.orderId;
+  console.log(`  Waiting for Base fulfillment...`);
+  const result = await provider.pollFulfillment(pollId);
+  if (result.status === 'fulfilled') {
+    console.log(`\n  Bridge complete! Status: fulfilled`);
+    if (result.dstTxHash) {
+      console.log(`  Base TX:  ${result.dstTxHash}`);
+      console.log(`  URL: ${explorer.base}/tx/${result.dstTxHash}`);
+    }
+    await solTracker.snapshotAndPrint('Source: Solana');
+    await baseTracker.snapshotAndPrint('Destination: Base');
+    console.log('');
+  } else {
+    console.log('\n  Timed out. Check with: wallet bridge status ' + pollId + '\n');
+  }
+}
+
 // ── bridge history ──────────────────────────────────────────
 
 function chainName(chainId: number): string {
   if (chainId === 1) return 'Ethereum';
+  if (chainId === 8453) return 'Base';
   if (chainId === 7565164) return 'Solana';
   return `Chain ${chainId}`;
 }
@@ -585,7 +1293,7 @@ export async function bridgeHistoryCommand(network: Network) {
 
     let idStr = '';
     if (o.srcTxHash) {
-      const txExplorer = o.srcChainId === 1 ? explorer.evm : explorer.solana;
+      const txExplorer = o.srcChainId === 8453 ? explorer.base : o.srcChainId === 1 ? explorer.evm : explorer.solana;
       const shortHash = `${o.srcTxHash.slice(0, 8)}...${o.srcTxHash.slice(-6)}`;
       idStr = `\x1b]8;;${txExplorer}/tx/${o.srcTxHash}\x07${shortHash}\x1b]8;;\x07`;
     } else if (o.orderId) {
@@ -640,13 +1348,13 @@ export async function bridgeStatusCommand(orderId: string, network: Network) {
   console.log(`  You ${isFulfilled ? 'got' : 'get'}:     ${formatToken(takeAmt, takeDec)} ${o.dstToken} on ${chainName(o.dstChainId)}`);
 
   if (o.srcTxHash) {
-    const srcExplorer = o.srcChainId === 1 ? explorer.evm : explorer.solana;
+    const srcExplorer = o.srcChainId === 8453 ? explorer.base : o.srcChainId === 1 ? explorer.evm : explorer.solana;
     console.log(`\n  Source TX:  ${o.srcTxHash}`);
     console.log(`  URL:       ${srcExplorer}/tx/${o.srcTxHash}`);
   }
 
   if (o.dstTxHash) {
-    const dstExplorer = o.dstChainId === 1 ? explorer.evm : explorer.solana;
+    const dstExplorer = o.dstChainId === 8453 ? explorer.base : o.dstChainId === 1 ? explorer.evm : explorer.solana;
     console.log(`  Dest TX:   ${o.dstTxHash}`);
     console.log(`  URL:       ${dstExplorer}/tx/${o.dstTxHash}`);
   }

@@ -164,6 +164,15 @@ wallet bridge 100 usdc sol
 wallet bridge 1 eth sol
 wallet bridge 100 usdc usdc-sol
 
+# Base bridge previews (dry-run)
+wallet bridge 1000 usdc usdc-base
+wallet bridge 0.5 eth eth-base
+wallet bridge 500 usdc-base sol
+
+# Base swaps (dry-run)
+wallet swap 500 usdc-base eth-base
+wallet swap 0.1 eth-base usdc-base
+
 # Buy SOL (Jupiter)
 wallet buy 1 sol
 
@@ -179,6 +188,8 @@ wallet zap 10000 usdc jitosol
 
 # Value of staked Solana assets
 wallet value 10 jitosol
+wallet value 100 usdc-base
+wallet value 0.5 eth-base
 
 # Quote with all paths
 wallet quote 10000
@@ -189,7 +200,7 @@ wallet swap 100 usdc wsol-eth
 
 ## Notes
 
-- Bridging, Jupiter, and Jito are mainnet only — skip on testnet
+- Bridging (including Base), Jupiter, and Jito are mainnet only — skip on testnet
 - Zap stETH works on testnet (CoW + Lido both available on Sepolia)
 - Testnet tokens have no value, experiment freely
 - No audit is required for testnet commands

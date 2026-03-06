@@ -1,5 +1,5 @@
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { type Network, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, EXPLORERS, TOKENS, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, SOLANA_MINTS, HISTORY_LIMIT } from '../config.js';
+import { type Network, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, BASESCAN_CHAIN_ID, EXPLORERS, TOKENS, BASE_TOKENS, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, SOLANA_MINTS, HISTORY_LIMIT } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getConnection } from '../lib/solana.js';
 import { formatToken, formatAddress } from '../lib/format.js';
@@ -86,8 +86,8 @@ export async function transactionsCommand(network: Network, limit: number) {
 
   const apiKey = process.env.ETHERSCAN_API_KEY;
 
-  // Fetch ETH txs + token txs + Solana sigs in parallel
-  const baseParams = evmAddress ? {
+  // Fetch ETH txs + Base txs + token txs + Solana sigs in parallel
+  const ethParams = evmAddress ? {
     chainid: ETHERSCAN_CHAIN_ID[network],
     module: 'account',
     address: evmAddress,
@@ -99,26 +99,31 @@ export async function transactionsCommand(network: Network, limit: number) {
     apikey: apiKey || '',
   } : null;
 
-  const evmTxPromise = (apiKey && baseParams) ? (async () => {
-    const params = new URLSearchParams({ ...baseParams, action: 'txlist' });
-    const res = await fetch(`${ETHERSCAN_API}?${params}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as { status: string; result: EtherscanTx[] | string };
-  })() : null;
+  // Base tx history via Etherscan V2 requires a paid plan — try anyway, fail gracefully
+  const baseChainParams = evmAddress ? {
+    chainid: BASESCAN_CHAIN_ID[network],
+    module: 'account',
+    address: evmAddress,
+    startblock: '0',
+    endblock: '99999999',
+    page: '1',
+    offset: String(limit),
+    sort: 'desc',
+    apikey: apiKey || '',
+  } : null;
 
-  const tokenTxPromise = (apiKey && baseParams) ? (async () => {
-    const params = new URLSearchParams({ ...baseParams, action: 'tokentx' });
-    const res = await fetch(`${ETHERSCAN_API}?${params}`);
+  const fetchEtherscan = (params: Record<string, string>, action: string) => async () => {
+    const qs = new URLSearchParams({ ...params, action });
+    const res = await fetch(`${ETHERSCAN_API}?${qs}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as { status: string; result: EtherscanTokenTx[] | string };
-  })() : null;
+    return (await res.json()) as { status: string; result: any[] | string };
+  };
 
-  const internalTxPromise = (apiKey && baseParams) ? (async () => {
-    const params = new URLSearchParams({ ...baseParams, action: 'txlistinternal' });
-    const res = await fetch(`${ETHERSCAN_API}?${params}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as { status: string; result: EtherscanInternalTx[] | string };
-  })() : null;
+  const evmTxPromise = (apiKey && ethParams) ? fetchEtherscan(ethParams, 'txlist')() : null;
+  const tokenTxPromise = (apiKey && ethParams) ? fetchEtherscan(ethParams, 'tokentx')() : null;
+  const internalTxPromise = (apiKey && ethParams) ? fetchEtherscan(ethParams, 'txlistinternal')() : null;
+  const baseTxPromise = (apiKey && baseChainParams) ? fetchEtherscan(baseChainParams, 'txlist')() : null;
+  const baseTokenTxPromise = (apiKey && baseChainParams) ? fetchEtherscan(baseChainParams, 'tokentx')() : null;
 
   // Track which Solana connection to use for parsed tx details
   let solConn = getConnection(network);
@@ -136,10 +141,12 @@ export async function transactionsCommand(network: Network, limit: number) {
     return sigs;
   })() : null;
 
-  const [evmTxResult, tokenTxResult, internalTxResult, solResult] = await Promise.allSettled([
+  const [evmTxResult, tokenTxResult, internalTxResult, baseTxResult, baseTokenTxResult, solResult] = await Promise.allSettled([
     evmTxPromise ?? Promise.resolve(null),
     tokenTxPromise ?? Promise.resolve(null),
     internalTxPromise ?? Promise.resolve(null),
+    baseTxPromise ?? Promise.resolve(null),
+    baseTokenTxPromise ?? Promise.resolve(null),
     solPromise ?? Promise.resolve(null),
   ]);
 
@@ -257,6 +264,87 @@ export async function transactionsCommand(network: Network, limit: number) {
       }
       console.log(`  Explorer: ${explorer.evm}/address/${evmAddress}`);
     }
+  }
+
+  // ── Base Transactions ──
+  console.log(`\n  ── Base Transactions ${SEP}`);
+  if (!evmAddress) {
+    console.log('  No EVM wallet configured\n');
+  } else {
+    const baseEntries: EvmEntry[] = [];
+    const baseTokensCfg = BASE_TOKENS[network];
+    const knownBaseTokens = new Set([baseTokensCfg.USDC.toLowerCase()]);
+
+    if (baseTxResult.status === 'fulfilled') {
+      const data = baseTxResult.value as { status: string; result: EtherscanTx[] | string } | null;
+      if (data && data.status === '1' && Array.isArray(data.result)) {
+        for (const tx of data.result) {
+          const ethValue = Number(tx.value) / 1e18;
+          const isSend = tx.from.toLowerCase() === evmAddress;
+          baseEntries.push({
+            timestamp: Number(tx.timeStamp),
+            hash: tx.hash,
+            amount: ethValue,
+            symbol: 'ETH',
+            isSend,
+            counterparty: isSend ? tx.to : tx.from,
+            label: tx.functionName ? tx.functionName.split('(')[0] : (ethValue > 0 ? 'transfer' : 'contract'),
+            failed: tx.isError === '1',
+          });
+        }
+      }
+    }
+
+    if (baseTokenTxResult.status === 'fulfilled') {
+      const data = baseTokenTxResult.value as { status: string; result: EtherscanTokenTx[] | string } | null;
+      if (data && data.status === '1' && Array.isArray(data.result)) {
+        for (const tx of data.result) {
+          if (!knownBaseTokens.has(tx.contractAddress.toLowerCase())) continue;
+          const decimals = Number(tx.tokenDecimal) || 18;
+          const amount = Number(tx.value) / 10 ** decimals;
+          const isSend = tx.from.toLowerCase() === evmAddress;
+          baseEntries.push({
+            timestamp: Number(tx.timeStamp),
+            hash: tx.hash,
+            amount,
+            symbol: tx.tokenSymbol || '???',
+            isSend,
+            counterparty: isSend ? tx.to : tx.from,
+            label: 'transfer',
+            failed: false,
+          });
+        }
+      }
+    }
+
+    const baseHashesWithAmounts = new Set(baseEntries.filter(e => e.amount > 0).map(e => e.hash));
+    const baseDeduped = baseEntries.filter(e => e.amount > 0 || !baseHashesWithAmounts.has(e.hash));
+
+    if (baseDeduped.length === 0) {
+      console.log('  View transactions on BaseScan (no free API available)');
+    } else {
+      baseDeduped.sort((a, b) => b.timestamp - a.timestamp);
+      const display = baseDeduped.slice(0, limit);
+
+      for (const e of display) {
+        const date = new Date(e.timestamp * 1000);
+        const time = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const dateStr = `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+        const arrow = e.isSend ? '→' : '←';
+        const counterparty = resolveLabel(e.counterparty);
+        const status = e.failed ? ' FAIL' : '';
+        const shortHash = e.hash.slice(0, 8) + '...' + e.hash.slice(-6);
+        const txUrl = `${explorer.base}/tx/${e.hash}`;
+        const link = termLink(shortHash, txUrl);
+        const amtStr = e.amount > 0
+          ? `${formatToken(e.amount, 4).padStart(10)} ${e.symbol.padEnd(6)}`
+          : `${''.padStart(10)} ${''.padEnd(6)}`;
+        const lbl = (e.label + status).slice(0, 12).padEnd(12);
+
+        console.log(`   ${dateStr.padEnd(12)}${amtStr} ${arrow} ${counterparty.padEnd(12)} ${lbl} ${link}`);
+      }
+    }
+    console.log(`  Explorer: ${explorer.base}/address/${evmAddress}`);
   }
 
   // ── Solana Transactions ──

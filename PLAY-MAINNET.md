@@ -1,6 +1,6 @@
 # Mainnet Playbook
 
-Monthly flow: USDC arrives on Ethereum. Deploy into staked assets (stETH + JitoSOL).
+Monthly flow: USDC arrives on Ethereum. Deploy into staked assets (stETH + JitoSOL). Bridge to Base for low-fee operations.
 
 Mainnet defaults to dry-run (safe). Every write command needs `--run` to execute.
 
@@ -169,6 +169,25 @@ wallet bridge 20 sol eth --run
 wallet bridge history
 ```
 
+### Move funds to Base (low gas fees)
+
+```bash
+# Bridge USDC or ETH from Ethereum to Base
+wallet bridge 1000 usdc usdc-base --run
+wallet bridge 0.5 eth eth-base --run
+
+# Swap on Base (much cheaper gas)
+wallet swap 500 usdc-base eth-base --run
+wallet swap 0.1 eth-base usdc-base --run
+
+# Bridge back when needed
+wallet bridge 500 usdc-base usdc --run
+
+# Send on Base
+wallet send 100 usdc-base coinbase-eth --run
+wallet send 0.1 eth-base coinbase-eth --run
+```
+
 ### Send to Coinbase
 
 ```bash
@@ -193,6 +212,8 @@ wallet balance
 |--------|----------|
 | USDC -> stETH | CoW/Uniswap/LI.FI + Lido (~3% APR) |
 | USDC -> JitoSOL | deBridge/LI.FI/Jupiter + Jito (~7% APR) |
+| ETH/USDC -> Base | deBridge/LI.FI bridge (low-fee operations) |
+| Base swaps | LI.FI (ETH-BASE <-> USDC-BASE) |
 | USDC -> Bank (off-ramp) | Multi-provider: Spritz (ACH), Peer/ZKP2P (P2P, coming soon) |
 
 ## Tips

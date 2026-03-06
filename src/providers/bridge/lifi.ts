@@ -86,7 +86,7 @@ const NATIVE_ETH_LIFI = '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE';
 
 /** Translate deBridge native ETH address to LI.FI format */
 function toLifiNativeToken(token: string, chainId: string): string {
-  if (chainId === '1' && token.toLowerCase() === NATIVE_ETH_ZERO.toLowerCase()) {
+  if ((chainId === '1' || chainId === '8453') && token.toLowerCase() === NATIVE_ETH_ZERO.toLowerCase()) {
     return NATIVE_ETH_LIFI;
   }
   return token;
