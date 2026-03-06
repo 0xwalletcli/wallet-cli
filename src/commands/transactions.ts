@@ -415,7 +415,8 @@ export async function transactionsCommand(network: Network, limit: number) {
         }
 
         // Skip txs where wallet had no balance change (referenced but not involved)
-        if (parsed?.meta && amount === 0 && !failed) continue;
+        // Also skip if we couldn't parse the transaction at all (no useful info)
+        if (amount === 0 && !failed) continue;
         displayed++;
 
         const amtStr = amount > 0

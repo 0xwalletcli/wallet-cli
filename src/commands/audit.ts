@@ -23,6 +23,7 @@ const REQUIRED_HOSTS = [
   'api.coingecko.com',
   'trade-api.gateway.uniswap.org',
   'li.quest',
+  'api.spritz.finance',
 ];
 
 // minimum pool sizes to consider healthy
@@ -270,11 +271,13 @@ export async function auditCommand(network: Network) {
 
   const uniswapApiKey = process.env.UNISWAP_API_KEY;
 
+  const spritzApiKey = process.env.SPRITZ_API_KEY;
+
   const [
     evmBlock, solSlot, marketPrices,
     cowEth, cowWsol, jupSol, deBridgeSol,
     deBridgeStatus, etherscanCheck, stethRatio, lidoSupply, jitoPool,
-    uniswapCheck, lifiCheck,
+    uniswapCheck, lifiCheck, spritzCheck,
   ] = await Promise.allSettled([
     // Infrastructure
     withTimeout(client.getBlockNumber(), TIMEOUT).then(block => ({ block, ms: Date.now() - evmStart })),
@@ -346,6 +349,14 @@ export async function auditCommand(network: Network) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return { ms: Date.now() - start };
     })(),
+    // Spritz Finance API (off-ramp)
+    spritzApiKey ? (async () => {
+      const start = Date.now();
+      const { getSpritzClient } = await import('../lib/spritz.js');
+      const client = getSpritzClient();
+      const accounts = await withTimeout(client.bankAccount.list(), TIMEOUT);
+      return { ms: Date.now() - start, accounts: accounts.length };
+    })() : Promise.resolve(null),
   ]);
 
   // ── Extract market prices first (needed for spread calculations) ──
@@ -541,6 +552,29 @@ export async function auditCommand(network: Network) {
   } else {
     printCheck('LI.FI API', 'fail', lifiCheck.reason?.message || 'failed');
     record('LI.FI API', 'fail', lifiCheck.reason?.message || 'failed');
+  }
+
+  // Spritz Finance (off-ramp)
+  console.log(`\n  ── Spritz Finance (Off-ramp) ${SEP}`);
+
+  if (!spritzApiKey) {
+    printCheck('Spritz API', 'warn', 'No SPRITZ_API_KEY set (withdraw unavailable)');
+    record('Spritz API', 'warn', 'No API key configured');
+  } else if (spritzCheck.status === 'fulfilled') {
+    if (spritzCheck.value == null) {
+      printCheck('Spritz API', 'warn', 'Skipped (no API key)');
+      record('Spritz API', 'warn', 'Skipped');
+    } else {
+      printCheck('Spritz API', 'ok', `${spritzCheck.value.accounts} bank account(s) linked (${spritzCheck.value.ms}ms)`);
+      record('Spritz API', 'ok', `${spritzCheck.value.accounts} bank account(s) (${spritzCheck.value.ms}ms)`);
+      if (spritzCheck.value.accounts === 0) {
+        printCheck('Bank accounts', 'warn', 'No bank accounts linked — add one at https://app.spritz.finance');
+        record('Spritz Bank Accounts', 'warn', 'No accounts linked');
+      }
+    }
+  } else {
+    printCheck('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
+    record('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
   }
 
   // Cross-platform comparison

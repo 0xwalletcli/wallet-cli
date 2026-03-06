@@ -187,6 +187,21 @@ async function checkLifi(): Promise<CheckResult> {
   }
 }
 
+async function checkSpritz(): Promise<CheckResult> {
+  const apiKey = process.env.SPRITZ_API_KEY;
+  if (!apiKey) return { status: 'DOWN', detail: 'no API key' };
+  const start = Date.now();
+  try {
+    const { getSpritzClient } = await import('../lib/spritz.js');
+    const client = getSpritzClient();
+    const accounts = await withTimeout(client.bankAccount.list(), TIMEOUT);
+    const latency = Date.now() - start;
+    return { status: latency > 2000 ? 'SLOW' : 'OK', detail: `${accounts.length} bank account(s)`, latency };
+  } catch {
+    return { status: 'DOWN', latency: Date.now() - start };
+  }
+}
+
 async function checkJupiter(): Promise<CheckResult> {
   const start = Date.now();
   try {
@@ -363,7 +378,7 @@ export async function healthCommand() {
   console.log('  Checking services...\n');
 
   // Run all checks in parallel
-  const [evmMain, evmTest, solMain, solTest, cow, uniswap, lifi, debridge, jupiter, etherscan, lido, jito, market, swapPrices, bridgePrices, jupSol, lidoApr, jitoApy] =
+  const [evmMain, evmTest, solMain, solTest, cow, uniswap, lifi, debridge, jupiter, etherscan, spritz, lido, jito, market, swapPrices, bridgePrices, jupSol, lidoApr, jitoApy] =
     await Promise.all([
       checkEvmRpc('mainnet'),
       checkEvmRpc('testnet'),
@@ -375,6 +390,7 @@ export async function healthCommand() {
       checkDeBridge(),
       checkJupiter(),
       checkEtherscan(),
+      checkSpritz(),
       checkLido(),
       checkJito(),
       getMarketPrices(),
@@ -397,6 +413,7 @@ export async function healthCommand() {
     { label: 'deBridge', result: debridge },
     { label: 'Jupiter', result: jupiter },
     { label: 'Etherscan', result: etherscan },
+    { label: 'Spritz (off-ramp)', result: spritz },
     { label: 'Lido (stETH)', result: lido, extra: lido.status !== 'DOWN' && lidoApr != null ? `APR ${lidoApr.toFixed(2)}%` : undefined },
     { label: 'Jito (JitoSOL)', result: jito, extra: jito.status !== 'DOWN' && jitoApy != null ? `APY ${(jitoApy * 100).toFixed(2)}%` : undefined },
   ];
@@ -420,11 +437,11 @@ export async function healthCommand() {
 
   // Exchanges & Bridges
   console.log(`\n  ── Exchanges & Bridges ${SEP}`);
-  printAligned(4); printAligned(5); printAligned(6); printAligned(7); printAligned(8); printAligned(9);
+  printAligned(4); printAligned(5); printAligned(6); printAligned(7); printAligned(8); printAligned(9); printAligned(10);
 
   // Staking
   console.log(`\n  ── Staking ${SEP}`);
-  printAligned(10); printAligned(11);
+  printAligned(11); printAligned(12);
 
   // Prices — execution vs market
   console.log(`\n  ── Prices ${SEP}`);

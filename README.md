@@ -15,6 +15,7 @@ CLI tool for managing crypto without centralized exchanges.
 - **Transactions** history across Ethereum + Solana with clickable explorer links
 - **Wrap/Unwrap** native assets: ETH ↔ WETH, SOL ↔ WSOL
 - **Audit** all integrations before mainnet transactions (prices, pools, contracts, APIs)
+- **Withdraw** USDC to your bank account via [Spritz Finance](https://spritz.finance) (off-ramp, no CEX)
 - **Connect** MetaMask, Coinbase Wallet, Phantom (EVM via WalletConnect or browser extension; Solana via browser extension) — sign transactions without storing private keys
 - **Address book** for human-readable wallet names
 - **Price fallback** — CoinGecko primary, DeFi Llama fallback (never blocked by rate limits)
@@ -77,6 +78,9 @@ ETHERSCAN_API_KEY=
 # Alternative swap providers
 UNISWAP_API_KEY=               # free key from https://developers.uniswap.org
 LIFI_API_KEY=                  # increases LI.FI rate limit (200 req/2hr → 200 req/min)
+
+# Off-ramp (withdraw USDC to bank)
+SPRITZ_API_KEY=                # API key from https://app.spritz.finance
 ```
 
 ## Quick Start
@@ -224,7 +228,21 @@ wallet unstake claim steth --run
 wallet unstake 10 jitosol --run
 ```
 
-### 10. Send to external wallets
+### 10. Withdraw USDC to bank (off-ramp)
+
+```bash
+# List linked bank accounts
+wallet withdraw accounts
+
+# Withdraw USDC to your bank via Spritz (dry-run first)
+wallet withdraw 500
+wallet withdraw 500 --run
+
+# Recent withdrawals
+wallet withdraw history
+```
+
+### 11. Send to external wallets
 
 ```bash
 wallet send 0.5 eth coinbase-eth --run
@@ -232,7 +250,7 @@ wallet send 5 sol coinbase-sol --run
 wallet send 10 sol phantom --run
 ```
 
-### 11. Review
+### 12. Review
 
 ```bash
 wallet balance                 # balances across Ethereum + Solana
@@ -244,6 +262,7 @@ wallet stake history           # recent staking transactions
 wallet unstake history         # recent unstakes + pending Lido withdrawals
 wallet zap history             # recent zap operations
 wallet buy history             # recent buy orders
+wallet withdraw history        # recent withdrawals
 ```
 
 ## All Commands
@@ -280,6 +299,9 @@ wallet buy history             # recent buy orders
 | `wallet tokens` | Show supported tokens, addresses, and explorer links |
 | `wallet mint <token> [amount]` | Get testnet tokens — `mint eth`, `mint usdc` (faucet links), `mint sol 2` (airdrop) |
 | `wallet approve <token> <spender> <amt>` | ERC-20 approval helper |
+| `wallet withdraw <amount>` | Withdraw USDC to bank account via Spritz (off-ramp, mainnet only) |
+| `wallet withdraw accounts` | List linked bank accounts |
+| `wallet withdraw history` | Recent withdrawals |
 | `wallet cancel [orderId]` | Cancel a pending CoW Swap order |
 | `wallet connect [chain] [browser]` | Connect wallet — EVM via WalletConnect or `evm browser`; Solana via browser (MetaMask, Coinbase, Phantom, Solflare) |
 | `wallet disconnect [target]` | Disconnect session(s) — WC + browser (`disconnect evm`, `disconnect solana`, `disconnect metamask`, or all) |
@@ -322,7 +344,7 @@ wallet buy history             # recent buy orders
 ## Security
 
 - **Audit gate** — mainnet write commands are blocked unless a passing `wallet audit` has been run within the last 7 days. The audit verifies all integrated services, price sanity, pool health, stETH/ETH ratio, and USDC peg stability.
-- **Network egress guard** — all outbound connections are restricted to a whitelist of known hosts (RPCs, CoW, deBridge, Jupiter, Uniswap, LI.FI, CoinGecko, DeFi Llama). Even if an npm dependency is compromised, it cannot phone home with your keys.
+- **Network egress guard** — all outbound connections are restricted to a whitelist of known hosts (RPCs, CoW, deBridge, Jupiter, Uniswap, LI.FI, Spritz, CoinGecko, DeFi Llama). Even if an npm dependency is compromised, it cannot phone home with your keys.
 - **`child_process` disabled** — prevents subprocess-based exfiltration (`curl`, `wget`, etc.)
 - **UDP sockets blocked** — prevents DNS-tunneling exfiltration
 - **Install scripts disabled** (`.npmrc: ignore-scripts=true`) — prevents `postinstall` attacks
@@ -349,6 +371,7 @@ wallet buy history             # recent buy orders
 | **Stake SOL** | Jito | SOL -> JitoSOL, liquid staking + MEV rewards (~7% APR) |
 | **Unstake ETH** | Lido | stETH -> request withdrawal (1-5 day queue) -> claim ETH |
 | **Unstake SOL** | Jito | JitoSOL -> SOL, instant via SPL stake pool |
+| **Withdraw** | Spritz Finance | USDC -> fiat ACH to linked bank account (off-ramp) |
 | **Send** | Direct transfer | ETH/ERC-20 or SOL/SPL transfer to any address |
 | **Wrap/Unwrap** | WETH / WSOL | Native assets (ETH/SOL) to ERC-20/SPL equivalents and back |
 | **Zap** | Multi-platform | USDC -> stETH (swap+Lido) or USDC -> JitoSOL (bridge+Jito) |
@@ -367,6 +390,7 @@ Swap and bridge protocols are pluggable providers behind a common interface. By 
 | **Swap** | [Jupiter](https://jup.ag) | Solana DEX aggregator, USDC <-> SOL with dynamic slippage |
 | **Bridge** | [deBridge](https://debridge.finance) | Cross-chain ETH/USDC/SOL both ways |
 | **Bridge** | [LI.FI/Jumper](https://li.fi) | Cross-chain bridge aggregator |
+| **Off-ramp** | [Spritz Finance](https://spritz.finance) | USDC -> bank account via ACH (US, mainnet only) |
 
 Provider resolution order: `--route` flag > `wallet config` setting > `auto` (all providers).
 

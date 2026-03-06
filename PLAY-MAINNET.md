@@ -120,9 +120,27 @@ wallet zap history
 
 ---
 
-## Exit flow: unstake + send to Coinbase
+## Exit flow: withdraw to bank or send to Coinbase
 
 When you want to cash out:
+
+### Option A: Withdraw USDC directly to bank (Spritz)
+
+No CEX needed — USDC goes straight to your linked bank account via ACH.
+
+```bash
+# List linked bank accounts
+wallet withdraw accounts
+
+# Withdraw USDC to bank (dry-run first)
+wallet withdraw 5000
+wallet withdraw 5000 --run
+
+# Check status
+wallet withdraw history
+```
+
+### Option B: Unstake + send to Coinbase
 
 ### Unstake ETH (Lido, 1-5 day queue)
 
@@ -175,6 +193,7 @@ wallet balance
 |--------|----------|
 | USDC -> stETH | CoW/Uniswap/LI.FI + Lido (~3% APR) |
 | USDC -> JitoSOL | deBridge/LI.FI/Jupiter + Jito (~7% APR) |
+| USDC -> Bank (off-ramp) | Spritz Finance (ACH, ~1 business day) |
 
 ## Tips
 

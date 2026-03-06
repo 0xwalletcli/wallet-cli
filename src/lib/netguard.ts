@@ -46,6 +46,9 @@ const ALLOWED_HOSTS = new Set([
   'eth-api.lido.fi',
   // Jito (staking APY)
   'kobe.mainnet.jito.network',
+  // Spritz Finance (off-ramp)
+  'api.spritz.finance',
+  'platform.spritz.finance',
   // WalletConnect relay
   'relay.walletconnect.com',
   // localhost (for dev/testing)

@@ -367,22 +367,43 @@ wallet balance
 
 ---
 
-## Phase 15: Send
+## Phase 15: Withdraw USDC to bank (Spritz off-ramp)
+
+Requires `SPRITZ_API_KEY` in `.env` and a linked bank account on Spritz.
 
 ```bash
-# 15.1 — Send ETH to yourself (your own EVM address)
+# 15.1 — List linked bank accounts
+wallet withdraw accounts
+
+# 15.2 — Withdraw (dry-run)
+wallet withdraw 1
+
+# 15.3 — Withdraw (execute — sends USDC to Spritz, ACH to bank ~1 business day)
+wallet withdraw 1 --run
+
+# 15.4 — Verify + history
+wallet balance
+wallet withdraw history
+```
+
+---
+
+## Phase 16: Send
+
+```bash
+# 16.1 — Send ETH to yourself (your own EVM address)
 wallet send 0.0001 eth 0xDd104d5b8a582Db5a229d8749e7991a30823e31B --run
 
-# 15.2 — Send SOL to yourself (your own Solana address)
+# 16.2 — Send SOL to yourself (your own Solana address)
 wallet send 0.001 sol 6MACtaCgvUM6uefGbP2HVp8u2CRgmWcb4hTWpdQTN93D --run
 
-# 15.3 — Verify both chains
+# 16.3 — Verify both chains
 wallet balance
 ```
 
 ---
 
-## Phase 16: Final review
+## Phase 17: Final review
 
 ```bash
 # All histories — verify every operation is recorded
@@ -392,6 +413,7 @@ wallet bridge history
 wallet stake history
 wallet unstake history
 wallet zap history
+wallet withdraw history
 wallet txs --limit 20
 
 # Final balances
@@ -403,7 +425,7 @@ wallet health
 
 ---
 
-## Phase 17: Claim stETH withdrawal (run 1-5 days after Phase 7)
+## Phase 18: Claim stETH withdrawal (run 1-5 days after Phase 7)
 
 ```bash
 # 17.1 — Check if withdrawal is finalized
@@ -496,10 +518,15 @@ wallet balance
 | 13.1-13.2 | Unstake JitoSOL -> SOL | gas | [ ] |
 | **Phase 14 — Wrap/unwrap SOL** | | | |
 | 14.1-14.4 | Wrap + unwrap SOL/WSOL | gas | [ ] |
-| **Phase 15 — Send** | | | |
-| 15.1 | Send ETH | gas | [ ] |
-| 15.2 | Send SOL | gas | [ ] |
-| **Phase 16 — Final review** | | | |
-| 16 | All histories + final balance | free | [ ] |
-| **Phase 17 — Claim stETH (1-5 days later)** | | | |
-| 17.1-17.3 | Claim Lido withdrawal | gas | [ ] |
+| **Phase 15 — Withdraw (Spritz)** | | | |
+| 15.1 | Withdraw accounts | free | [ ] |
+| 15.2 | Withdraw dry-run | free | [ ] |
+| 15.3 | Withdraw USDC to bank | ~$1 | [ ] |
+| 15.4 | Withdraw history | free | [ ] |
+| **Phase 16 — Send** | | | |
+| 16.1 | Send ETH | gas | [ ] |
+| 16.2 | Send SOL | gas | [ ] |
+| **Phase 17 — Final review** | | | |
+| 17 | All histories + final balance | free | [ ] |
+| **Phase 18 — Claim stETH (1-5 days later)** | | | |
+| 18.1-18.3 | Claim Lido withdrawal | gas | [ ] |

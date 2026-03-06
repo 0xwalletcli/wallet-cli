@@ -426,6 +426,45 @@ program
     await cancelCommand(orderId, getNetwork(program));
   }));
 
+// wallet withdraw [args...]
+program
+  .command('withdraw [args...]')
+  .description('Withdraw USDC to bank account via Spritz (e.g., withdraw 500)')
+  .addHelpText('after', `
+  Usage:
+    withdraw <amount>          Withdraw USDC to linked bank account
+    withdraw accounts          List linked bank accounts
+    withdraw history           Recent withdrawals
+
+  Mainnet only. Requires SPRITZ_API_KEY in .env.
+  Link bank accounts at https://app.spritz.finance
+
+  Examples:
+    wallet withdraw 500
+    wallet withdraw 1000 --run
+    wallet withdraw accounts
+    wallet withdraw history
+`)
+  .action(timed(async (args: string[]) => {
+    if (args[0] === 'history') {
+      const { withdrawHistoryCommand } = await import('./commands/withdraw.js');
+      await withdrawHistoryCommand();
+    } else if (args[0] === 'accounts') {
+      const { withdrawAccountsCommand } = await import('./commands/withdraw.js');
+      await withdrawAccountsCommand();
+    } else if (args.length === 1) {
+      checkAuditGate(getNetwork(program), getDryRun(program));
+      const { withdrawCommand } = await import('./commands/withdraw.js');
+      await withdrawCommand(args[0], getNetwork(program), getDryRun(program));
+    } else {
+      console.error('  Usage: wallet withdraw <amount>');
+      console.error('         wallet withdraw accounts');
+      console.error('         wallet withdraw history');
+      console.error('         wallet withdraw --help');
+      process.exit(1);
+    }
+  }));
+
 // wallet audit
 program
   .command('audit')

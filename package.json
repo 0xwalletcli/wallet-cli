@@ -17,6 +17,7 @@
     "@solana/spl-stake-pool": "^1.1.8",
     "@solana/spl-token": "^0.4.12",
     "@solana/web3.js": "^1.98.0",
+    "@spritz-finance/api-client": "^0.3.2",
     "@walletconnect/sign-client": "^2.23.7",
     "bs58": "^6.0.0",
     "commander": "^13.1.0",

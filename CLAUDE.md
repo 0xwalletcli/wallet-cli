@@ -16,7 +16,7 @@ Default network is `mainnet`. Use `--network testnet` or `-n testnet` for testne
 
 - **When adding new commands**: always update `README.md` (All Commands table + workflow examples) and this `CLAUDE.md` file (Architecture section + any relevant sections).
 - **Dry-run defaults**: mainnet defaults to dry-run (safe). Use `--run` to execute. Testnet defaults to live. `--dry-run` forces simulation on testnet.
-- Write commands (swap, send, bridge, stake, unstake, approve, buy, zap, wrap, unwrap) support `--dry-run`/`--run`. Read commands (balance, health, history, mint, value) don't.
+- Write commands (swap, send, bridge, stake, unstake, approve, buy, zap, wrap, unwrap, withdraw) support `--dry-run`/`--run`. Read commands (balance, health, history, mint, value) don't.
 - **Subcommand pattern**: swap, bridge, stake, unstake use `[args...]` variadic pattern in commander to support subcommands (`history`, `status`). The action handler checks `args[0]` for keyword routing.
 - **Solana RPC performance**: Never query signatures from high-traffic contracts (e.g., Jito stake pool). Always query the user's own address and filter results. Fetch chains in parallel with `Promise.allSettled`.
 - **When adding a new third-party integration** (API, contract, bridge, DEX): you MUST also expand `src/commands/audit.ts` to verify that service's health, prices, and/or pool liquidity. The audit is the trust gate before mainnet transactions — every external dependency must be covered.
@@ -92,6 +92,7 @@ src/
     tokens.ts           — supported token reference (addresses, decimals, explorer links, includes WSOL)
     health.ts           — service status dashboard (RPCs, APIs, staking APR/APY, prices)
     mint.ts             — testnet faucet (SOL airdrop programmatic, ETH/USDC print URLs)
+    withdraw.ts         — withdraw USDC to bank via Spritz Finance off-ramp (Ethereum mainnet only) + accounts/history subcommands
     cancel.ts           — cancel pending CoW Swap orders
     address.ts          — address book management
   providers/
@@ -117,6 +118,7 @@ src/
     format.ts           — formatToken, parseTokenAmount, formatUSD, formatAddress, formatGasFee, link (OSC 8 hyperlink), txLink (shortened clickable tx hash)
     prompt.ts           — confirm(), validateAmount(), warnMainnet(), warnDryRun(), select() for provider selection
     config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider, per-chain signer (SignerConfig { evm, solana })
+    spritz.ts           — Spritz Finance API client: payment requests, web3 tx params, bank account listing, payment history
     addressbook.ts      — JSON-file address book (~/.wallet-cli/addresses.json)
 ```
 
@@ -132,6 +134,7 @@ swap, bridge, buy, stake, unstake, zap support subcommands via `[args...]` varia
 | `wallet stake` | `history`, `--help` |
 | `wallet unstake` | `history`, `--help` |
 | `wallet zap` | `history`, `--help` |
+| `wallet withdraw` | `accounts`, `history`, `--help` |
 
 - `history` shows recent orders/transactions for that command
 - `status <orderId>` shows detailed info for a specific order (swap/bridge only)
@@ -160,6 +163,7 @@ Override with `EVM_RPC_URL` and `SOLANA_RPC_URL` env vars.
 - CoW Swap: works on both mainnet and Sepolia
 - Uniswap: works on both mainnet and Sepolia, requires UNISWAP_API_KEY
 - LI.FI/Jumper: swap (same-chain) and bridge (cross-chain), sell-only (no ExactOutput/buy orders)
+- Spritz Finance: mainnet only, US only, requires SPRITZ_API_KEY + Spritz account with linked bank
 - Audit gate: mainnet write commands require a passing audit within 7 days
 
 ## UX Patterns
@@ -204,8 +208,9 @@ See `FEATURES-LIST.md` for the full feature roadmap with research notes and impl
 
 ### Pending Features (in priority order)
 
-5. **Fiat on-ramp/off-ramp** — non-CEX provider + TOTP 2FA
-6. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
+5. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
+6. **Bill pay** — pay credit cards, mortgages, utilities via Spritz (research complete, pending implementation)
+7. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
 
 ## Environment Variables (.env)
 
@@ -218,4 +223,5 @@ ETHERSCAN_API_KEY=...       # optional, for transaction history + stake/unstake 
 UNISWAP_API_KEY=...         # required for Uniswap swaps (free key from developers.uniswap.org)
 LIFI_API_KEY=...            # optional, increases LI.FI rate limit (200 req/2hr → 200 req/min)
 WC_PROJECT_ID=...           # optional, required for WalletConnect signing (free from cloud.reown.com)
+SPRITZ_API_KEY=...          # optional, required for withdraw command (off-ramp USDC to bank via Spritz)
 ```
