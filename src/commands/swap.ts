@@ -1,4 +1,5 @@
-import { type Network, TOKENS, COW_CONFIG, EXPLORERS, SOLANA_MINTS, HISTORY_LIMIT, getEvmAccount, getSolanaKeypair, getSolanaAddress } from '../config.js';
+import { type Network, TOKENS, COW_CONFIG, EXPLORERS, SOLANA_MINTS, HISTORY_LIMIT } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getERC20Balance, getERC20Allowance, approveERC20, unwrapWeth, waitForReceipt } from '../lib/evm.js';
 import { getConnection, getSolBalance, getSplTokenBalance } from '../lib/solana.js';
 import { getJupiterQuote, buildAndSendJupiterSwap, getSolanaMint, getSolanaDecimals } from '../lib/jupiter.js';
@@ -63,7 +64,8 @@ export async function swapCommand(
     process.exit(1);
   }
 
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const tokens = TOKENS[network];
 
   const sellToken = from === 'USDC' ? tokens.USDC : from === 'WSOL-ETH' ? tokens.WSOL : tokens.WETH;
@@ -344,8 +346,9 @@ async function swapSolana(amount: string, from: string, to: string, network: Net
     process.exit(1);
   }
 
-  const keypair = getSolanaKeypair();
-  const walletAddr = keypair.publicKey.toBase58();
+  const signer = await resolveSigner();
+  const walletAddr = await signer.getSolanaAddress();
+  if (!walletAddr) { console.error('  No Solana address configured.'); process.exit(1); }
   const explorer = EXPLORERS[network];
   const fromDecimals = getSolanaDecimals(from);
   const toDecimals = getSolanaDecimals(to);
@@ -441,7 +444,7 @@ async function swapSolana(amount: string, from: string, to: string, network: Net
     signature = await buildAndSendJupiterSwap({
       userPublicKey: walletAddr,
       quote,
-      keypair,
+      signer,
       network,
     });
   } catch (err: any) {
@@ -502,7 +505,8 @@ function resolveTokenDecimals(address: string, network: Network): number {
 export async function orderHistoryCommand(network: Network, kindFilter: 'sell' | 'buy') {
   const label = kindFilter === 'sell' ? 'swap' : 'buy';
   const allProviders = listSwapProviders();
-  const solAddress = getSolanaAddress();
+  const signer = await resolveSigner();
+  const solAddress = await signer.getSolanaAddress();
   const providerNames = allProviders.map(p => p.displayName);
   if (solAddress && network === 'mainnet') providerNames.push('Jupiter');
   console.log(`\n  Fetching ${label} history from ${providerNames.join(', ')}...\n`);

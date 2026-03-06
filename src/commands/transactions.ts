@@ -1,5 +1,6 @@
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { type Network, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, EXPLORERS, TOKENS, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, SOLANA_MINTS, HISTORY_LIMIT, getEvmAccount, getSolanaAddress } from '../config.js';
+import { type Network, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, EXPLORERS, TOKENS, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, SOLANA_MINTS, HISTORY_LIMIT } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getConnection } from '../lib/solana.js';
 import { formatToken, formatAddress } from '../lib/format.js';
 import { listAddresses } from '../lib/addressbook.js';
@@ -64,9 +65,9 @@ function termLink(text: string, url: string): string {
 }
 
 export async function transactionsCommand(network: Network, limit: number) {
-  const evmAccount = getEvmAccount();
-  const evmAddress = evmAccount.address.toLowerCase();
-  const solAddress = getSolanaAddress();
+  const signer = await resolveSigner();
+  const evmAddress = (await signer.getEvmAddress())?.toLowerCase() ?? null;
+  const solAddress = await signer.getSolanaAddress();
   const tokens = TOKENS[network];
   const explorer = EXPLORERS[network];
 
@@ -86,7 +87,7 @@ export async function transactionsCommand(network: Network, limit: number) {
   const apiKey = process.env.ETHERSCAN_API_KEY;
 
   // Fetch ETH txs + token txs + Solana sigs in parallel
-  const baseParams = {
+  const baseParams = evmAddress ? {
     chainid: ETHERSCAN_CHAIN_ID[network],
     module: 'account',
     address: evmAddress,
@@ -96,33 +97,43 @@ export async function transactionsCommand(network: Network, limit: number) {
     offset: String(limit),
     sort: 'desc',
     apikey: apiKey || '',
-  };
+  } : null;
 
-  const evmTxPromise = apiKey ? (async () => {
+  const evmTxPromise = (apiKey && baseParams) ? (async () => {
     const params = new URLSearchParams({ ...baseParams, action: 'txlist' });
     const res = await fetch(`${ETHERSCAN_API}?${params}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as { status: string; result: EtherscanTx[] | string };
   })() : null;
 
-  const tokenTxPromise = apiKey ? (async () => {
+  const tokenTxPromise = (apiKey && baseParams) ? (async () => {
     const params = new URLSearchParams({ ...baseParams, action: 'tokentx' });
     const res = await fetch(`${ETHERSCAN_API}?${params}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as { status: string; result: EtherscanTokenTx[] | string };
   })() : null;
 
-  const internalTxPromise = apiKey ? (async () => {
+  const internalTxPromise = (apiKey && baseParams) ? (async () => {
     const params = new URLSearchParams({ ...baseParams, action: 'txlistinternal' });
     const res = await fetch(`${ETHERSCAN_API}?${params}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return (await res.json()) as { status: string; result: EtherscanInternalTx[] | string };
   })() : null;
 
+  // Track which Solana connection to use for parsed tx details
+  let solConn = getConnection(network);
+  let usedFallbackRpc = false;
   const solPromise = solAddress ? (async () => {
-    const conn = getConnection(network);
     const pubkey = new PublicKey(solAddress);
-    return conn.getSignaturesForAddress(pubkey, { limit: limit * 3 });
+    const sigs = await solConn.getSignaturesForAddress(pubkey, { limit: limit * 3 });
+    // Public RPCs (e.g. publicnode) often don't index history — fallback to Solana's RPC
+    if (sigs.length === 0 && network === 'mainnet' && !process.env.SOLANA_RPC_URL) {
+      const { Connection: SolConnection } = await import('@solana/web3.js');
+      solConn = new SolConnection('https://api.mainnet-beta.solana.com');
+      usedFallbackRpc = true;
+      return solConn.getSignaturesForAddress(pubkey, { limit: limit * 3 });
+    }
+    return sigs;
   })() : null;
 
   const [evmTxResult, tokenTxResult, internalTxResult, solResult] = await Promise.allSettled([
@@ -134,7 +145,9 @@ export async function transactionsCommand(network: Network, limit: number) {
 
   // ── Ethereum Transactions ──
   console.log(`\n  ── Ethereum Transactions ${SEP}`);
-  if (!apiKey) {
+  if (!evmAddress) {
+    console.log('  No EVM wallet configured\n');
+  } else if (!apiKey) {
     console.log('  No ETHERSCAN_API_KEY in .env');
     console.log('  Get a free key: https://etherscan.io/apis\n');
   } else if (evmTxResult.status === 'rejected' && tokenTxResult.status === 'rejected') {
@@ -249,7 +262,7 @@ export async function transactionsCommand(network: Network, limit: number) {
   // ── Solana Transactions ──
   console.log(`\n  ── Solana Transactions ${SEP}`);
   if (!solAddress) {
-    console.log('  No SOLANA_ADDRESS configured in .env\n');
+    console.log('  No Solana wallet configured\n');
   } else if (solResult.status === 'rejected') {
     console.log(`  Failed to fetch (${solResult.reason?.message || solResult.reason})`);
   } else {
@@ -258,46 +271,46 @@ export async function transactionsCommand(network: Network, limit: number) {
       console.log('  No transactions found.\n');
     } else {
       // Fetch parsed transaction details for SOL amounts + token transfers
-      // Use a tight timeout — if RPC is slow/429, fall back to basic display
-      // Suppress @solana/web3.js retry messages during fetch
-      const conn = getConnection(network);
-      const origLog = console.log;
-      const origWarn = console.warn;
-      const origInfo = console.info;
-      const origError = console.error;
-      const origStderrWrite = process.stderr.write;
-      console.log = (...args: any[]) => {
-        if (typeof args[0] === 'string' && args[0].includes('429')) return;
-        origLog(...args);
-      };
-      console.warn = (...args: any[]) => {
-        if (typeof args[0] === 'string' && args[0].includes('429')) return;
-        origWarn(...args);
-      };
-      console.info = () => {};
-      console.error = (...args: any[]) => {
-        if (typeof args[0] === 'string' && args[0].includes('429')) return;
-        origError(...args);
-      };
-      process.stderr.write = function(chunk: any, ...rest: any[]) {
-        if (typeof chunk === 'string' && chunk.includes('429')) return true;
-        return origStderrWrite.apply(process.stderr, [chunk, ...rest] as any);
-      } as any;
-      // Fetch parsed txs individually (batch calls fail on public RPCs)
-      const parsedTxs = await Promise.race([
-        Promise.all(sigs.map(s =>
-          conn.getParsedTransaction(s.signature, { maxSupportedTransactionVersion: 0 }).catch(() => null)
-        )),
-        new Promise<null>(resolve => setTimeout(() => resolve(null), 10000)),
-      ]).catch(() => null);
-      console.log = origLog;
-      console.warn = origWarn;
-      console.info = origInfo;
-      console.error = origError;
-      process.stderr.write = origStderrWrite;
-
-      if (!parsedTxs) {
-        console.log('  (RPC too slow to fetch details — showing signatures only)');
+      // Skip on fallback RPC (rate-limited, too slow for individual getParsedTransaction)
+      let parsedTxs: (any | null)[] | null = null;
+      if (!usedFallbackRpc) {
+        const conn = solConn;
+        // Suppress @solana/web3.js retry messages during fetch
+        const origLog = console.log;
+        const origWarn = console.warn;
+        const origInfo = console.info;
+        const origError = console.error;
+        const origStderrWrite = process.stderr.write;
+        console.log = (...args: any[]) => {
+          if (typeof args[0] === 'string' && args[0].includes('429')) return;
+          origLog(...args);
+        };
+        console.warn = (...args: any[]) => {
+          if (typeof args[0] === 'string' && args[0].includes('429')) return;
+          origWarn(...args);
+        };
+        console.info = () => {};
+        console.error = (...args: any[]) => {
+          if (typeof args[0] === 'string' && args[0].includes('429')) return;
+          origError(...args);
+        };
+        process.stderr.write = function(chunk: any, ...rest: any[]) {
+          if (typeof chunk === 'string' && chunk.includes('429')) return true;
+          return origStderrWrite.apply(process.stderr, [chunk, ...rest] as any);
+        } as any;
+        // Fetch parsed txs individually (batch calls fail on public RPCs)
+        const toFetch = sigs.slice(0, limit);
+        parsedTxs = await Promise.race([
+          Promise.all(toFetch.map(s =>
+            conn.getParsedTransaction(s.signature, { maxSupportedTransactionVersion: 0 }).catch(() => null)
+          )),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 8000)),
+        ]).catch(() => null);
+        console.log = origLog;
+        console.warn = origWarn;
+        console.info = origInfo;
+        console.error = origError;
+        process.stderr.write = origStderrWrite;
       }
       const solAddr = solAddress;
       const clusterParam = network === 'testnet' ? '?cluster=devnet' : '';

@@ -2,7 +2,8 @@ import { createPublicClient, http, parseAbi } from 'viem';
 import { mainnet, sepolia } from 'viem/chains';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
-import { DEBRIDGE_CONFIG, COW_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, JUPITER_CONFIG, SOLANA_CONFIG, TOKENS, LIDO_CONFIG, JITO_CONFIG, STAKING_URLS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmRpcUrl, getEvmAccount } from '../config.js';
+import { DEBRIDGE_CONFIG, COW_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, JUPITER_CONFIG, SOLANA_CONFIG, TOKENS, LIDO_CONFIG, JITO_CONFIG, STAKING_URLS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmRpcUrl } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { formatToken } from '../lib/format.js';
 import { listSwapProviders } from '../providers/registry.js';
 import { fetchLidoApr, fetchJitoApy } from '../lib/staking.js';
@@ -238,7 +239,7 @@ interface BridgePriceResult {
 async function getSwapEthPrices(): Promise<SwapPriceResult[]> {
   const providers = listSwapProviders();
   let fromAddress = '0x0000000000000000000000000000000000000001';
-  try { fromAddress = getEvmAccount().address; } catch {}
+  try { fromAddress = (await (await resolveSigner()).getEvmAccount()).address; } catch {}
 
   const results = await Promise.allSettled(providers.map(async (p) => {
     const quote = await withTimeout(p.getQuote({
@@ -267,9 +268,14 @@ async function getSwapEthPrices(): Promise<SwapPriceResult[]> {
 /** Execution prices from bridge providers (100 USDC → SOL).
  *  Uses direct API calls — provider.getQuote() adds enableEstimate which requires funded wallets. */
 async function getBridgeSolPrices(): Promise<BridgePriceResult[]> {
-  const dstAddress = process.env.SOLANA_ADDRESS || 'DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy';
+  let dstAddress = 'DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy';
   let srcAddress = '0x0000000000000000000000000000000000000001';
-  try { srcAddress = getEvmAccount().address; } catch {}
+  try {
+    const signer = await resolveSigner();
+    srcAddress = (await signer.getEvmAccount()).address;
+    const solAddr = await signer.getSolanaAddress();
+    if (solAddr) dstAddress = solAddr;
+  } catch {}
 
   const debridgeQuote = async (): Promise<BridgePriceResult> => {
     const db = DEBRIDGE_CONFIG;

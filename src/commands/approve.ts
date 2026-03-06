@@ -1,4 +1,5 @@
-import { type Network, TOKENS, COW_CONFIG, LIDO_CONFIG, getEvmAccount } from '../config.js';
+import { type Network, TOKENS, COW_CONFIG, LIDO_CONFIG } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getERC20Allowance, approveERC20 } from '../lib/evm.js';
 import { parseTokenAmount, formatToken } from '../lib/format.js';
 import { confirm, validateAmount, warnMainnet, warnDryRun } from '../lib/prompt.js';
@@ -39,7 +40,8 @@ export async function approveCommand(
     process.exit(1);
   }
 
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const { address: tokenAddress, decimals } = tokenEntry(network);
   const parsedAmount = isUnlimited ? MAX_UINT256 : parseTokenAmount(amount, decimals);
 

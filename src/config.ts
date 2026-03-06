@@ -1,8 +1,5 @@
 // dotenv loaded in index.ts before netguard
 import { mainnet, sepolia } from 'viem/chains';
-import { privateKeyToAccount } from 'viem/accounts';
-import { Keypair } from '@solana/web3.js';
-import bs58 from 'bs58';
 
 export type Network = 'mainnet' | 'testnet';
 
@@ -115,25 +112,7 @@ export const SOLANA_CONFIG = {
   },
 } as const;
 
-// EVM account from private key
-export function getEvmAccount() {
-  const key = process.env.EVM_PRIVATE_KEY;
-  if (!key) throw new Error('EVM_PRIVATE_KEY not set in .env');
-  return privateKeyToAccount(key as `0x${string}`);
-}
 
-// Solana address (just for receiving / balance checks)
-export function getSolanaAddress(): string | null {
-  return process.env.SOLANA_ADDRESS || null;
-}
-
-// Solana keypair from private key (needed for send/stake)
-export function getSolanaKeypair(): Keypair {
-  const key = process.env.SOLANA_PRIVATE_KEY;
-  if (!key) throw new Error('SOLANA_PRIVATE_KEY not set in .env');
-  const decoded = bs58.decode(key);
-  return Keypair.fromSecretKey(decoded);
-}
 
 // Uniswap Trading API (EVM swap)
 export const UNISWAP_CONFIG = {

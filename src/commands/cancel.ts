@@ -1,4 +1,5 @@
-import { type Network, COW_CONFIG, getEvmAccount } from '../config.js';
+import { type Network, COW_CONFIG } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { cancelCowOrder } from '../providers/swap/cow.js';
 import { confirm } from '../lib/prompt.js';
 
@@ -9,7 +10,8 @@ const COW_EXPLORER: Record<Network, string> = {
 
 export async function cancelCommand(orderId: string | undefined, network: Network) {
   const cow = COW_CONFIG[network];
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
 
   // If no orderId, find the most recent open/signing order
   if (!orderId) {

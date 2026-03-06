@@ -1,8 +1,11 @@
-import { createPublicClient, createWalletClient, http, parseAbi, type PublicClient, type WalletClient } from 'viem';
-import { type Network, EVM_CHAINS, TOKENS, getEvmAccount, getEvmRpcUrl } from '../config.js';
+import { createPublicClient, http, parseAbi, type PublicClient, type WalletClient, type Chain, type HttpTransport, type LocalAccount } from 'viem';
+import { type Network, EVM_CHAINS, TOKENS, getEvmRpcUrl } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
+
+type TypedWalletClient = WalletClient<HttpTransport, Chain, LocalAccount>;
 
 let _publicClient: PublicClient | null = null;
-let _walletClient: WalletClient | null = null;
+let _walletClient: TypedWalletClient | null = null;
 let _currentNetwork: Network | null = null;
 
 export function getPublicClient(network: Network): PublicClient {
@@ -15,14 +18,14 @@ export function getPublicClient(network: Network): PublicClient {
   return _publicClient;
 }
 
-export function getWalletClient(network: Network): WalletClient {
+export async function getWalletClient(network: Network): Promise<TypedWalletClient> {
   if (_walletClient && _currentNetwork === network) return _walletClient;
-  const account = getEvmAccount();
-  _walletClient = createWalletClient({
-    account,
-    chain: EVM_CHAINS[network],
-    transport: http(getEvmRpcUrl(network)),
-  });
+  const signer = await resolveSigner();
+  _walletClient = await signer.getEvmWalletClient(
+    EVM_CHAINS[network],
+    http(getEvmRpcUrl(network)),
+  );
+  _currentNetwork = network;
   return _walletClient;
 }
 
@@ -83,8 +86,9 @@ export async function getERC20Allowance(network: Network, token: `0x${string}`, 
 }
 
 export async function approveERC20(network: Network, token: `0x${string}`, spender: `0x${string}`, amount: bigint): Promise<`0x${string}`> {
-  const wallet = getWalletClient(network);
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const wallet = await getWalletClient(network);
+  const account = await signer.getEvmAccount();
   const hash = await wallet.writeContract({
     account,
     address: token,
@@ -230,8 +234,9 @@ export async function getWethBalance(network: Network, address: `0x${string}`): 
 }
 
 export async function wrapEth(network: Network, amount: bigint): Promise<`0x${string}`> {
-  const wallet = getWalletClient(network);
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const wallet = await getWalletClient(network);
+  const account = await signer.getEvmAccount();
   return wallet.writeContract({
     account,
     address: TOKENS[network].WETH,
@@ -242,8 +247,9 @@ export async function wrapEth(network: Network, amount: bigint): Promise<`0x${st
 }
 
 export async function unwrapWeth(network: Network, amount: bigint): Promise<`0x${string}`> {
-  const wallet = getWalletClient(network);
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const wallet = await getWalletClient(network);
+  const account = await signer.getEvmAccount();
   return wallet.writeContract({
     account,
     address: TOKENS[network].WETH,

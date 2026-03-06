@@ -46,6 +46,8 @@ const ALLOWED_HOSTS = new Set([
   'eth-api.lido.fi',
   // Jito (staking APY)
   'kobe.mainnet.jito.network',
+  // WalletConnect relay
+  'relay.walletconnect.com',
   // localhost (for dev/testing)
   'localhost',
   '127.0.0.1',

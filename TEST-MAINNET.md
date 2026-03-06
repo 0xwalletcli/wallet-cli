@@ -57,6 +57,45 @@ wallet address list
 
 ---
 
+## Phase 2.5: Migrate from .env to wallet signing
+
+Switch signing from raw private keys in `.env` to wallet extensions.
+This is a one-time setup — all subsequent phases use wallet signing.
+
+```bash
+# 2.5.1 — Connect EVM wallet
+#          Option A: WalletConnect (scan QR with MetaMask mobile)
+wallet connect evm
+#          Option B: Browser extension (MetaMask, Coinbase Wallet, Phantom)
+wallet connect evm browser
+
+# 2.5.2 — Connect Solana wallet (browser extension: Phantom, Solflare, Backpack)
+wallet connect solana
+
+# 2.5.3 — Verify sessions are active
+wallet keys
+
+# 2.5.4 — Switch signers per chain
+wallet config set signer evm wc          # or: browser
+wallet config set signer solana browser
+
+# 2.5.5 — Verify signer is set
+wallet config
+
+# 2.5.6 — Verify balances still resolve (read path uses signer addresses)
+wallet balance
+```
+
+**After step 2.5:** All write commands (swap, send, bridge, stake, etc.) will prompt
+your wallet for approval instead of auto-signing with `.env` keys. EVM supports
+`env`, `wc` (WalletConnect), and `browser`. Solana supports `env` and `browser`.
+Set each chain independently, or switch both back with `wallet config set signer env`.
+
+**Cleanup (optional):** Once you've verified wallet signing works through Phase 3,
+you can remove `EVM_PRIVATE_KEY` and `SOLANA_PRIVATE_KEY` from your `.env` file.
+
+---
+
 ## Phase 3: Ethereum swaps (gasless via CoW)
 
 CoW Swap is gasless — the solver pays gas. This gets us ETH without spending our 0.002 ETH gas.
@@ -404,6 +443,12 @@ wallet balance
 | **Phase 2 — Local** | | | |
 | 2.1-2.2 | Config (set, reset) | free | [ ] |
 | 2.3 | Address book (add, list, remove) | free | [ ] |
+| **Phase 2.5 — Migrate signer** | | | |
+| 2.5.1 | Connect EVM (WC or `evm browser`) | free | [ ] |
+| 2.5.2 | Connect Solana (browser) | free | [ ] |
+| 2.5.3 | Verify sessions (keys) | free | [ ] |
+| 2.5.4 | Set signer per chain (evm wc/browser, solana browser) | free | [ ] |
+| 2.5.5-6 | Verify config + balance | free | [ ] |
 | **Phase 3 — Swaps** | | | |
 | 3.1 | Swap dry-run | free | [ ] |
 | 3.2 | Swap USDC -> ETH (auto) | ~$10 | [ ] |

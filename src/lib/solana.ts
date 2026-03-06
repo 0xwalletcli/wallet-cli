@@ -1,6 +1,7 @@
-import { Connection, PublicKey, LAMPORTS_PER_SOL, SystemProgram, Transaction, sendAndConfirmTransaction, type Keypair } from '@solana/web3.js';
+import { Connection, PublicKey, LAMPORTS_PER_SOL, SystemProgram, Transaction } from '@solana/web3.js';
 import { getAssociatedTokenAddressSync, getAccount, createAssociatedTokenAccountInstruction, createSyncNativeInstruction, createCloseAccountInstruction, NATIVE_MINT } from '@solana/spl-token';
 import { type Network, SOLANA_CONFIG, WSOL_CONFIG } from '../config.js';
+import type { Signer } from '../signers/types.js';
 
 let _connection: Connection | null = null;
 let _currentNetwork: Network | null = null;
@@ -42,12 +43,15 @@ export async function getWsolBalance(network: Network, address: string): Promise
 
 export async function wrapSol(
   network: Network,
-  keypair: Keypair,
+  signer: Signer,
   amountSol: number,
 ): Promise<string> {
   const conn = getConnection(network);
   const lamports = Math.round(amountSol * LAMPORTS_PER_SOL);
-  const ata = getAssociatedTokenAddressSync(NATIVE_MINT, keypair.publicKey);
+  const solAddr = await signer.getSolanaAddress();
+  if (!solAddr) throw new Error('No Solana address available');
+  const pubkey = new PublicKey(solAddr);
+  const ata = getAssociatedTokenAddressSync(NATIVE_MINT, pubkey);
 
   const tx = new Transaction();
 
@@ -61,16 +65,16 @@ export async function wrapSol(
 
   if (needsAta) {
     tx.add(createAssociatedTokenAccountInstruction(
-      keypair.publicKey,
+      pubkey,
       ata,
-      keypair.publicKey,
+      pubkey,
       NATIVE_MINT,
     ));
   }
 
   // Transfer SOL to the ATA
   tx.add(SystemProgram.transfer({
-    fromPubkey: keypair.publicKey,
+    fromPubkey: pubkey,
     toPubkey: ata,
     lamports,
   }));
@@ -78,44 +82,47 @@ export async function wrapSol(
   // Sync the native balance
   tx.add(createSyncNativeInstruction(ata));
 
-  const signature = await sendAndConfirmTransaction(conn, tx, [keypair]);
-  return signature;
+  return signer.signAndSendSolanaTransaction(conn, tx);
 }
 
 export async function unwrapSol(
   network: Network,
-  keypair: Keypair,
+  signer: Signer,
 ): Promise<string> {
   const conn = getConnection(network);
-  const ata = getAssociatedTokenAddressSync(NATIVE_MINT, keypair.publicKey);
+  const solAddr = await signer.getSolanaAddress();
+  if (!solAddr) throw new Error('No Solana address available');
+  const pubkey = new PublicKey(solAddr);
+  const ata = getAssociatedTokenAddressSync(NATIVE_MINT, pubkey);
 
   // Close the WSOL account — lamports are returned to the owner
   const tx = new Transaction().add(
-    createCloseAccountInstruction(ata, keypair.publicKey, keypair.publicKey),
+    createCloseAccountInstruction(ata, pubkey, pubkey),
   );
 
-  const signature = await sendAndConfirmTransaction(conn, tx, [keypair]);
-  return signature;
+  return signer.signAndSendSolanaTransaction(conn, tx);
 }
 
 export async function sendSol(
   network: Network,
-  from: Keypair,
+  signer: Signer,
   to: string,
   amountSol: number,
 ): Promise<string> {
   const conn = getConnection(network);
+  const solAddr = await signer.getSolanaAddress();
+  if (!solAddr) throw new Error('No Solana address available');
+  const fromPubkey = new PublicKey(solAddr);
   const toPubkey = new PublicKey(to);
   const lamports = Math.round(amountSol * LAMPORTS_PER_SOL);
 
   const tx = new Transaction().add(
     SystemProgram.transfer({
-      fromPubkey: from.publicKey,
+      fromPubkey,
       toPubkey,
       lamports,
     }),
   );
 
-  const signature = await sendAndConfirmTransaction(conn, tx, [from]);
-  return signature;
+  return signer.signAndSendSolanaTransaction(conn, tx);
 }

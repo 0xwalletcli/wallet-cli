@@ -478,22 +478,28 @@ configCmd
   });
 
 configCmd
-  .command('set <key> <value>')
+  .command('set <key> <value> [extra]')
   .description('Set a config value')
   .addHelpText('after', `
   Keys:
     swap       auto, cow, uniswap, lifi
     bridge     auto, debridge, lifi
+    signer     env, wc, browser
 
-  Default: auto (compare all providers, select interactively)
+  Per-chain signer:
+    config set signer evm wc            EVM via WalletConnect (MetaMask)
+    config set signer solana browser    Solana via browser wallet (Phantom)
+    config set signer solana env        Solana via .env keys
 
   Examples:
     config set swap cow
     config set bridge lifi
+    config set signer evm wc
+    config set signer solana browser
 `)
-  .action(async (key: string, value: string) => {
+  .action(async (key: string, value: string, extra?: string) => {
     const { configSetCommand } = await import('./commands/config.js');
-    configSetCommand(key, value);
+    configSetCommand(key, value, extra);
   });
 
 configCmd
@@ -503,6 +509,62 @@ configCmd
     const { configResetCommand } = await import('./commands/config.js');
     configResetCommand();
   });
+
+// wallet connect [args...]
+program
+  .command('connect [args...]')
+  .description('Connect a wallet (WalletConnect for EVM, browser for Solana)')
+  .addHelpText('after', `
+  Usage:
+    wallet connect              Connect EVM via WalletConnect (mobile QR)
+    wallet connect evm          Connect EVM via WalletConnect (mobile QR)
+    wallet connect evm browser  Connect EVM via browser extension (MetaMask, Coinbase, Phantom)
+    wallet connect solana       Connect Solana via browser extension (Phantom, Solflare, Backpack)
+
+  EVM supports WalletConnect (mobile) and browser extension.
+  Solana uses browser extension only.
+`)
+  .action(timed(async (args: string[]) => {
+    const { connectCommand } = await import('./commands/connect.js');
+    const chain = args[0];
+    const method = args[1];
+    await connectCommand(chain, { browser: method === 'browser' });
+  }));
+
+// wallet disconnect [wallet]
+program
+  .command('disconnect [wallet]')
+  .description('Disconnect wallet session(s)')
+  .addHelpText('after', `
+  Usage:
+    wallet disconnect           Disconnect all sessions (WC + browser)
+    wallet disconnect evm       Disconnect EVM session(s) (WC + browser)
+    wallet disconnect solana    Disconnect Solana browser session
+    wallet disconnect metamask  Disconnect by wallet name (WC only)
+`)
+  .action(timed(async (wallet?: string) => {
+    const { disconnectCommand } = await import('./commands/connect.js');
+    await disconnectCommand(wallet);
+  }));
+
+// wallet keys [list]
+const keysCmd = program
+  .command('keys')
+  .description('Show signing keys and WalletConnect sessions');
+
+keysCmd
+  .action(timed(async () => {
+    const { keysListCommand } = await import('./commands/connect.js');
+    await keysListCommand();
+  }));
+
+keysCmd
+  .command('list')
+  .description('List signing keys and WalletConnect sessions')
+  .action(timed(async () => {
+    const { keysListCommand } = await import('./commands/connect.js');
+    await keysListCommand();
+  }));
 
 // Strip bare "run"/"dry-run" from argv so commander doesn't see them as extra positional args.
 // getDryRun() reads from _rawArgv (saved before stripping). --run/--dry-run are handled by commander's .option().

@@ -5,18 +5,34 @@ import { homedir } from 'os';
 const CONFIG_DIR = join(homedir(), '.wallet-cli');
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 
+export interface SignerConfig {
+  evm: string;    // 'env' | 'wc' | 'browser'
+  solana: string; // 'env' | 'browser'
+}
+
 export interface WalletConfig {
   swapProvider: string;   // 'auto' | 'cow' | 'uniswap' | 'lifi'
   bridgeProvider: string; // 'auto' | 'debridge' | 'lifi'
+  signer: string | SignerConfig; // legacy string or per-chain object
 }
 
 const DEFAULTS: WalletConfig = {
   swapProvider: 'auto',
   bridgeProvider: 'auto',
+  signer: 'env',
 };
 
 const VALID_SWAP_PROVIDERS = ['auto', 'cow', 'uniswap', 'lifi'];
 const VALID_BRIDGE_PROVIDERS = ['auto', 'debridge', 'lifi'];
+const VALID_SIGNERS = ['env', 'wc', 'browser'];
+
+/** Normalize signer config — migrates legacy string to per-chain object */
+export function getSignerConfig(config: WalletConfig): SignerConfig {
+  if (typeof config.signer === 'object') return config.signer;
+  // Legacy: single string applies to both chains
+  const val = config.signer || 'env';
+  return { evm: val, solana: val };
+}
 
 export function loadConfig(): WalletConfig {
   try {
@@ -37,8 +53,8 @@ export function getConfigPath(): string {
   return CONFIG_FILE;
 }
 
-export function validateConfigKey(key: string): key is 'swap' | 'bridge' {
-  return key === 'swap' || key === 'bridge';
+export function validateConfigKey(key: string): key is 'swap' | 'bridge' | 'signer' {
+  return key === 'swap' || key === 'bridge' || key === 'signer';
 }
 
 export function validateConfigValue(key: string, value: string): string | null {
@@ -49,6 +65,10 @@ export function validateConfigValue(key: string, value: string): string | null {
   } else if (key === 'bridge') {
     if (!VALID_BRIDGE_PROVIDERS.includes(value)) {
       return `Invalid bridge provider: "${value}". Valid: ${VALID_BRIDGE_PROVIDERS.join(', ')}`;
+    }
+  } else if (key === 'signer') {
+    if (!VALID_SIGNERS.includes(value)) {
+      return `Invalid signer: "${value}". Valid: ${VALID_SIGNERS.join(', ')}`;
     }
   }
   return null;

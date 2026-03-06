@@ -1,7 +1,8 @@
 import { parseEther, parseAbi } from 'viem';
-import { PublicKey, Transaction, LAMPORTS_PER_SOL, sendAndConfirmTransaction } from '@solana/web3.js';
+import { PublicKey, Transaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction, getAccount, NATIVE_MINT } from '@solana/spl-token';
-import { type Network, TOKENS, WSOL_CONFIG, EXPLORERS, getEvmAccount, getSolanaKeypair } from '../config.js';
+import { type Network, TOKENS, WSOL_CONFIG, EXPLORERS } from '../config.js';
+import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getWalletClient, getERC20Balance, waitForReceipt } from '../lib/evm.js';
 import { getConnection, getSolBalance, getWsolBalance, sendSol } from '../lib/solana.js';
 import { resolveAddress } from '../lib/addressbook.js';
@@ -43,7 +44,8 @@ export async function sendCommand(
 }
 
 async function sendEvmCommand(amount: string, token: string, recipient: string, network: Network, dryRun: boolean) {
-  const account = getEvmAccount();
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
   const to = resolveAddress(recipient, 'evm') as `0x${string}`;
   const explorer = EXPLORERS[network];
 
@@ -87,7 +89,7 @@ async function sendEvmCommand(amount: string, token: string, recipient: string, 
     }
 
     console.log('  Sending transaction...');
-    const wallet = getWalletClient(network);
+    const wallet = await getWalletClient(network);
     try {
       const hash = await wallet.sendTransaction({ account, to, value });
       trackTx(hash, 'evm', network);
@@ -139,7 +141,7 @@ async function sendEvmCommand(amount: string, token: string, recipient: string, 
     }
 
     console.log('  Sending transaction...');
-    const wallet = getWalletClient(network);
+    const wallet = await getWalletClient(network);
     try {
       const hash = await wallet.writeContract({
         account,
@@ -197,7 +199,7 @@ async function sendEvmCommand(amount: string, token: string, recipient: string, 
     }
 
     console.log('  Sending transaction...');
-    const wallet = getWalletClient(network);
+    const wallet = await getWalletClient(network);
     try {
       const hash = await wallet.writeContract({
         account,
@@ -222,16 +224,18 @@ async function sendEvmCommand(amount: string, token: string, recipient: string, 
 }
 
 async function sendSolCommand(amount: string, recipient: string, network: Network, dryRun: boolean) {
-  const keypair = getSolanaKeypair();
+  const signer = await resolveSigner();
+  const walletAddr = await signer.getSolanaAddress();
+  if (!walletAddr) { console.error('  No Solana address configured.'); process.exit(1); }
   const to = resolveAddress(recipient, 'solana');
   const amountNum = Number(amount);
   const explorer = EXPLORERS[network];
 
-  console.log(`  From: ${keypair.publicKey.toBase58()}`);
+  console.log(`  From: ${walletAddr}`);
   console.log(`  To:   ${to}`);
   console.log('  Checking balance...');
 
-  const balance = await getSolBalance(network, keypair.publicKey.toBase58());
+  const balance = await getSolBalance(network, walletAddr);
   let insufficientBalance = false;
   if (balance < amountNum + 0.001) {
     console.log(`  ⚠ Insufficient SOL (have: ${formatToken(balance, 6)}, need: ${amount} + fees)`);
@@ -242,7 +246,7 @@ async function sendSolCommand(amount: string, recipient: string, network: Networ
   console.log(`  To:        ${to}`);
   console.log(`  Chain:     Solana ${network}\n`);
 
-  const tracker = new BalanceTracker(solTokens(network, keypair.publicKey.toBase58(), ['SOL']));
+  const tracker = new BalanceTracker(solTokens(network, walletAddr, ['SOL']));
 
   if (dryRun) {
     console.log('  [DRY RUN] Skipping execution.\n');
@@ -264,7 +268,7 @@ async function sendSolCommand(amount: string, recipient: string, network: Networ
 
   console.log('  Sending transaction...');
   try {
-    const sig = await sendSol(network, keypair, to, amountNum);
+    const sig = await sendSol(network, signer, to, amountNum);
     const cluster = network === 'testnet' ? '?cluster=devnet' : '';
     console.log(`  TX:  ${sig}`);
     console.log(`  URL: ${explorer.solana}/tx/${sig}${cluster}`);
@@ -276,17 +280,19 @@ async function sendSolCommand(amount: string, recipient: string, network: Networ
 }
 
 async function sendWsolCommand(amount: string, recipient: string, network: Network, dryRun: boolean) {
-  const keypair = getSolanaKeypair();
+  const signer = await resolveSigner();
+  const walletAddr = await signer.getSolanaAddress();
+  if (!walletAddr) { console.error('  No Solana address configured.'); process.exit(1); }
   const to = resolveAddress(recipient, 'solana');
   const amountNum = Number(amount);
   const explorer = EXPLORERS[network];
   const lamports = Math.round(amountNum * LAMPORTS_PER_SOL);
 
-  console.log(`  From: ${keypair.publicKey.toBase58()}`);
+  console.log(`  From: ${walletAddr}`);
   console.log(`  To:   ${to}`);
   console.log('  Checking WSOL balance...');
 
-  const balance = await getWsolBalance(network, keypair.publicKey.toBase58());
+  const balance = await getWsolBalance(network, walletAddr);
   let insufficientBalance = false;
   if (balance < amountNum) {
     console.log(`  ⚠ Insufficient WSOL (have: ${formatToken(balance, 6)}, need: ${amount})`);
@@ -297,7 +303,7 @@ async function sendWsolCommand(amount: string, recipient: string, network: Netwo
   console.log(`  To:        ${to}`);
   console.log(`  Chain:     Solana ${network}\n`);
 
-  const tracker = new BalanceTracker(solTokens(network, keypair.publicKey.toBase58(), ['WSOL', 'SOL']));
+  const tracker = new BalanceTracker(solTokens(network, walletAddr, ['WSOL', 'SOL']));
 
   if (dryRun) {
     console.log('  [DRY RUN] Skipping execution.\n');
@@ -319,6 +325,7 @@ async function sendWsolCommand(amount: string, recipient: string, network: Netwo
 
   console.log('  Sending transaction...');
   const conn = getConnection(network);
+  const fromPubkey = new PublicKey(walletAddr);
   const toPubkey = new PublicKey(to);
   const toAta = getAssociatedTokenAddressSync(NATIVE_MINT, toPubkey);
 
@@ -329,7 +336,7 @@ async function sendWsolCommand(amount: string, recipient: string, network: Netwo
     await getAccount(conn, toAta);
   } catch {
     tx.add(createAssociatedTokenAccountInstruction(
-      keypair.publicKey,
+      fromPubkey,
       toAta,
       toPubkey,
       NATIVE_MINT,
@@ -338,11 +345,11 @@ async function sendWsolCommand(amount: string, recipient: string, network: Netwo
 
   // Transfer WSOL (SPL token transfer)
   const { createTransferInstruction } = await import('@solana/spl-token');
-  const fromAta = getAssociatedTokenAddressSync(NATIVE_MINT, keypair.publicKey);
-  tx.add(createTransferInstruction(fromAta, toAta, keypair.publicKey, BigInt(lamports)));
+  const fromAta = getAssociatedTokenAddressSync(NATIVE_MINT, fromPubkey);
+  tx.add(createTransferInstruction(fromAta, toAta, fromPubkey, BigInt(lamports)));
 
   try {
-    const sig = await sendAndConfirmTransaction(conn, tx, [keypair]);
+    const sig = await signer.signAndSendSolanaTransaction(conn, tx);
     const cluster = network === 'testnet' ? '?cluster=devnet' : '';
     console.log(`  TX:  ${sig}`);
     console.log(`  URL: ${explorer.solana}/tx/${sig}${cluster}`);

@@ -34,6 +34,8 @@ const EXPECTED_HOSTS = [
   'li.quest',
   // CoinGecko
   'api.coingecko.com',
+  // WalletConnect relay
+  'relay.walletconnect.com',
   // localhost
   'localhost',
   '127.0.0.1',

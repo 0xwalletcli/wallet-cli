@@ -15,34 +15,66 @@ CLI tool for managing crypto without centralized exchanges.
 - **Transactions** history across Ethereum + Solana with clickable explorer links
 - **Wrap/Unwrap** native assets: ETH ↔ WETH, SOL ↔ WSOL
 - **Audit** all integrations before mainnet transactions (prices, pools, contracts, APIs)
+- **Connect** MetaMask, Coinbase Wallet, Phantom (EVM via WalletConnect or browser extension; Solana via browser extension) — sign transactions without storing private keys
 - **Address book** for human-readable wallet names
 - **Price fallback** — CoinGecko primary, DeFi Llama fallback (never blocked by rate limits)
+
+## Requirements
+
+- **Node.js** v18.x or later
+- **npm** v9+ (ships with Node 18)
 
 ## Setup
 
 ```bash
 npm install
 cp .env.example .env
+npm link                        # makes `wallet` available globally
 ```
+
+### Option A: Connect a wallet (recommended)
+
+Sign transactions with MetaMask, Coinbase Wallet, or Phantom — private keys never touch disk.
+
+```bash
+# EVM via WalletConnect (mobile QR — requires WC_PROJECT_ID in .env from https://cloud.reown.com)
+wallet connect evm
+wallet config set signer evm wc
+
+# EVM via browser extension (MetaMask, Coinbase Wallet, Phantom — no project ID needed)
+wallet connect evm browser
+wallet config set signer evm browser
+
+# Solana via browser extension (Phantom, Solflare, Backpack, Coinbase Wallet)
+wallet connect solana
+wallet config set signer solana browser
+```
+
+### Option B: Use private keys in `.env`
+
+Store keys locally for fully offline signing.
 
 Edit `.env`:
 
 ```bash
-# Required — your Ethereum private key (never shared, stays local)
+# Ethereum private key (never shared, stays local)
 EVM_PRIVATE_KEY=0x...
 
-# Your Solana wallet — for balance checks, bridge recipient, and sending SOL
-SOLANA_ADDRESS=...
-SOLANA_PRIVATE_KEY=...          # needed for send/stake/swap on Solana
+# Solana wallet
+SOLANA_PRIVATE_KEY=...          # base58 encoded, needed for send/stake/swap on Solana
+```
 
-# Optional — custom RPC URLs (public endpoints used by default)
+### Optional settings (both options)
+
+```bash
+# Custom RPC URLs (public endpoints used by default)
 EVM_RPC_URL=
 SOLANA_RPC_URL=
 
-# Optional — for transaction history (free key at https://etherscan.io/apis)
+# Transaction history (free key at https://etherscan.io/apis)
 ETHERSCAN_API_KEY=
 
-# Optional — alternative swap providers (see Provider Architecture below)
+# Alternative swap providers
 UNISWAP_API_KEY=               # free key from https://developers.uniswap.org
 LIFI_API_KEY=                  # increases LI.FI rate limit (200 req/2hr → 200 req/min)
 ```
@@ -94,7 +126,12 @@ Pin a default to skip the comparison:
 wallet config                              # show current config
 wallet config set swap cow                 # always use CoW Swap
 wallet config set bridge debridge          # always use deBridge
-wallet config reset                        # back to auto
+wallet config set signer evm wc           # EVM via WalletConnect (MetaMask mobile)
+wallet config set signer evm browser     # EVM via browser extension (MetaMask, Coinbase, Phantom)
+wallet config set signer solana browser   # Solana via browser extension
+wallet config set signer solana env       # Solana via .env keys
+wallet config set signer env              # both chains via .env keys (default)
+wallet config reset                        # back to defaults
 ```
 
 Override for a single command:
@@ -235,7 +272,7 @@ wallet buy history             # recent buy orders
 | `wallet zap history` | Recent zap operations |
 | `wallet quote <amount>` | Compare end-to-end costs + yield projections (6 paths across all providers) |
 | `wallet config` | View current CLI configuration |
-| `wallet config set <key> <value>` | Set config (e.g., `config set swap cow`) |
+| `wallet config set <key> <value> [chain]` | Set config (e.g., `config set swap cow`, `config set signer evm wc`) |
 | `wallet config reset` | Reset config to defaults (auto) |
 | `wallet audit` | Security audit of all integrations (required every 7 days for mainnet) |
 | `wallet health` | Check status of all RPCs, APIs, staking APR/APY, and asset prices |
@@ -244,6 +281,9 @@ wallet buy history             # recent buy orders
 | `wallet mint <token> [amount]` | Get testnet tokens — `mint eth`, `mint usdc` (faucet links), `mint sol 2` (airdrop) |
 | `wallet approve <token> <spender> <amt>` | ERC-20 approval helper |
 | `wallet cancel [orderId]` | Cancel a pending CoW Swap order |
+| `wallet connect [chain] [browser]` | Connect wallet — EVM via WalletConnect or `evm browser`; Solana via browser (MetaMask, Coinbase, Phantom, Solflare) |
+| `wallet disconnect [target]` | Disconnect session(s) — WC + browser (`disconnect evm`, `disconnect solana`, `disconnect metamask`, or all) |
+| `wallet keys` | Show signing keys, WalletConnect sessions, and browser sessions |
 | `wallet address add <name>` | Add to address book (`--evm`, `--solana`) |
 | `wallet address list` | List saved addresses |
 | `wallet address remove <name>` | Remove from address book |
@@ -286,7 +326,8 @@ wallet buy history             # recent buy orders
 - **`child_process` disabled** — prevents subprocess-based exfiltration (`curl`, `wget`, etc.)
 - **UDP sockets blocked** — prevents DNS-tunneling exfiltration
 - **Install scripts disabled** (`.npmrc: ignore-scripts=true`) — prevents `postinstall` attacks
-- Private keys stay in `.env` on your machine — never sent anywhere
+- **Signer abstraction** — pluggable per-chain signing: `.env` keys (default), WalletConnect for EVM (mobile QR), browser bridge for EVM + Solana (MetaMask, Coinbase Wallet, Phantom, Solflare, Backpack) — private keys never touch disk
+- Private keys stay in `.env` on your machine — never sent anywhere (or use WalletConnect/browser to avoid storing keys entirely)
 - All transactions require explicit `[y/N]` confirmation before signing
 - ERC-20 approvals are always exact amounts (never infinite)
 - Mainnet operations show a warning banner

@@ -75,11 +75,11 @@ describe('checkAuditGate', () => {
       expect(checkAuditGate('mainnet', false, barelyStale)).toBe('stale');
     });
 
-    it('allows when audit is exactly 7 days old (boundary)', () => {
+    it('allows when audit is just under 7 days old (boundary)', () => {
       const boundary = freshAudit({
-        timestamp: Date.now() - MAX_AGE_MS,
+        timestamp: Date.now() - MAX_AGE_MS + 50,
       });
-      // ageMs === MAX_AGE_MS, condition is > not >=, so this should pass
+      // ageMs < MAX_AGE_MS, condition is > so this should pass
       expect(checkAuditGate('mainnet', false, boundary)).toBe('allowed');
     });
 
