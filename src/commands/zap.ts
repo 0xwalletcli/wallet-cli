@@ -75,9 +75,10 @@ async function executeSwap(
   const currentAllowance = await getERC20Allowance(network, quote.sellToken as `0x${string}`, account.address, spender);
   const neededAllowance = BigInt(quote.sellAmount);
   if (currentAllowance < neededAllowance) {
+    const MAX_UINT256 = 2n ** 256n - 1n;
     const label = tokens.USDC.toLowerCase() === quote.sellToken.toLowerCase() ? 'USDC' : 'token';
-    console.log(`  Approving ${label} for ${provider.displayName}...`);
-    await approveERC20(network, quote.sellToken as `0x${string}`, spender, neededAllowance);
+    console.log(`  Approving ${label} (infinite) for ${provider.displayName}...`);
+    await approveERC20(network, quote.sellToken as `0x${string}`, spender, MAX_UINT256);
   }
 
   // Sign and submit via provider
@@ -178,8 +179,9 @@ async function executeBridgeTx(
     const spender = approvalAddr as `0x${string}`;
     const allowance = await getERC20Allowance(network, tokens.USDC, account.address, spender);
     if (allowance < usdcRaw) {
-      console.log(`  Approving USDC for ${provider.displayName}...`);
-      await approveERC20(network, tokens.USDC, spender, usdcRaw);
+      const MAX_UINT256 = 2n ** 256n - 1n;
+      console.log(`  Approving USDC (infinite) for ${provider.displayName}...`);
+      await approveERC20(network, tokens.USDC, spender, MAX_UINT256);
     }
   }
 

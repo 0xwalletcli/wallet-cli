@@ -2,7 +2,14 @@ import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { Network } from '../../config.js';
-import { TOKENS, UNISWAP_CONFIG, EXPLORERS } from '../../config.js';
+import { TOKENS, UNISWAP_CONFIG, EXPLORERS, DEBRIDGE_CONFIG } from '../../config.js';
+
+const NATIVE_ETH = DEBRIDGE_CONFIG.tokens.nativeETH;
+
+/** Uniswap API expects 0x0000...0000 for native ETH, not WETH address */
+function toUniswapToken(token: string, network: Network): string {
+  return token.toLowerCase() === TOKENS[network].WETH.toLowerCase() ? NATIVE_ETH : token;
+}
 import { resolveSigner } from '../../signers/index.js';
 import { getPublicClient, getWalletClient, getERC20Allowance, approveERC20, waitForReceipt, simulateTx } from '../../lib/evm.js';
 import type { SwapProvider, SwapQuote, SwapResult, SwapOrderSummary } from '../types.js';
@@ -105,8 +112,8 @@ const uniswapSwapProvider: SwapProvider = {
     const chain = chainId(network);
 
     const body: Record<string, unknown> = {
-      tokenIn: sellToken,
-      tokenOut: buyToken,
+      tokenIn: toUniswapToken(sellToken, network),
+      tokenOut: toUniswapToken(buyToken, network),
       tokenInChainId: chain,
       tokenOutChainId: chain,
       swapper: from,
@@ -190,21 +197,18 @@ const uniswapSwapProvider: SwapProvider = {
 
     if (raw.routing === 'CLASSIC') {
       // Classic: sign Permit2 data (if present), get swap calldata, simulate, send
-      const swapBody: Record<string, unknown> = {
-        quote: raw.quote,
-        simulateTransaction: false,
-      };
+      let currentQuote = raw.quote;
+      let permitData = raw.permitData;
+      let signature: string | undefined;
 
-      if (raw.permitData) {
+      if (permitData) {
         console.log('  Signing Permit2 approval...');
-        const signature = await account.signTypedData({
-          domain: raw.permitData.domain as any,
-          types: raw.permitData.types as any,
-          primaryType: Object.keys(raw.permitData.types).find(k => k !== 'EIP712Domain') || 'PermitSingle',
-          message: raw.permitData.values as any,
+        signature = await account.signTypedData({
+          domain: permitData.domain as any,
+          types: permitData.types as any,
+          primaryType: Object.keys(permitData.types).find(k => k !== 'EIP712Domain') || 'PermitSingle',
+          message: permitData.values as any,
         });
-        swapBody.permitData = raw.permitData;
-        swapBody.signature = signature;
       }
 
       const wallet = await getWalletClient(network);
@@ -214,9 +218,52 @@ const uniswapSwapProvider: SwapProvider = {
 
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         if (attempt > 1) {
-          console.log(`  Retry ${attempt}/${MAX_ATTEMPTS}: fetching fresh calldata...`);
+          // Fetch a fresh quote + re-sign permit on retry
+          console.log(`  Retry ${attempt}/${MAX_ATTEMPTS}: fetching fresh quote...`);
+          try {
+            const freshRes = await fetch(`${UNISWAP_CONFIG.api}/quote`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+              body: JSON.stringify({
+                tokenIn: toUniswapToken(quote.sellToken, network),
+                tokenOut: toUniswapToken(quote.buyToken, network),
+                tokenInChainId: chainId(network),
+                tokenOutChainId: chainId(network),
+                amount: quote.sellAmount,
+                type: quote.kind === 'sell' ? 'EXACT_INPUT' : 'EXACT_OUTPUT',
+                swapper: account.address,
+                slippageTolerance: 0.5,
+                routingPreference: 'BEST_PRICE',
+              }),
+            });
+            if (freshRes.ok) {
+              const freshData = (await freshRes.json()) as UniswapQuoteResponse;
+              if (freshData.routing === 'CLASSIC') {
+                currentQuote = freshData.quote;
+                if (freshData.permitData) {
+                  permitData = freshData.permitData;
+                  signature = await account.signTypedData({
+                    domain: permitData.domain as any,
+                    types: permitData.types as any,
+                    primaryType: Object.keys(permitData.types).find(k => k !== 'EIP712Domain') || 'PermitSingle',
+                    message: permitData.values as any,
+                  });
+                }
+              }
+            }
+          } catch { /* fall through with existing quote */ }
         } else {
           console.log('  Fetching swap calldata...');
+        }
+
+        const swapBody: Record<string, unknown> = {
+          quote: currentQuote,
+          simulateTransaction: false,
+          deadline: Math.floor(Date.now() / 1000) + 600, // 10 min deadline
+        };
+        if (permitData && signature) {
+          swapBody.permitData = permitData;
+          swapBody.signature = signature;
         }
 
         const swapRes = await fetch(`${UNISWAP_CONFIG.api}/swap`, {
@@ -240,7 +287,7 @@ const uniswapSwapProvider: SwapProvider = {
 
         const swapData = (await swapRes.json()) as UniswapSwapResponse;
 
-        // Simulate — if it fails, retry with fresh calldata
+        // Simulate — if it fails, retry with fresh quote
         try {
           await simulateTx(network, {
             account: account.address,
@@ -251,7 +298,7 @@ const uniswapSwapProvider: SwapProvider = {
         } catch (simErr: any) {
           lastError = simErr.message || 'simulation failed';
           if (attempt < MAX_ATTEMPTS) {
-            console.log(`  Simulation failed, will retry with fresh calldata...`);
+            console.log(`  Simulation failed, will retry with fresh quote...`);
             continue;
           }
           throw simErr;

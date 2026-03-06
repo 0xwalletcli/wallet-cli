@@ -279,12 +279,13 @@ export async function swapCommand(
     const spender = provider.getApprovalAddress(network) as `0x${string}`;
     const currentAllowance = await getERC20Allowance(network, sellToken, account.address, spender);
     if (currentAllowance < sellAmount) {
-      console.log(`\n  Approval needed: ${amount} ${from} to ${provider.displayName} (${spender})`);
+      const MAX_UINT256 = 2n ** 256n - 1n;
+      console.log(`\n  Infinite approval needed: ${from} to ${provider.displayName} (${spender})`);
       if (!await confirm('Approve?')) {
         console.log('  Cancelled.\n');
         return;
       }
-      await approveERC20(network, sellToken, spender, sellAmount);
+      await approveERC20(network, sellToken, spender, MAX_UINT256);
     }
   }
 

@@ -130,6 +130,7 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x11157667': 'InvalidSwap — swap route failed',
   '0xc9f52c71': 'TooLittleReceived — output amount below minimum',
   '0x24df576f': 'TooMuchRequested — input amount exceeded maximum',
+  '0x2c4029e9': 'ExecutionFailed — Uniswap Universal Router command failed (likely expired quote or slippage)',
 };
 
 /** Walk a viem error chain to find the raw revert data (hex bytes). */
@@ -162,6 +163,21 @@ function decodeRevertReason(err: any): string {
         const strHex = hex.slice(offset + 64, offset + 64 + len * 2);
         const reason = Buffer.from(strHex, 'hex').toString('utf-8');
         if (reason.length > 0) return reason;
+      } catch { /* fall through */ }
+    }
+
+    // ExecutionFailed(uint256 commandIndex, bytes message) — try to decode inner error
+    if (selector === '0x2c4029e9' && data.length > 10 + 64) {
+      try {
+        const hex = data.slice(10); // skip selector
+        const innerOffset = parseInt(hex.slice(64, 128), 16) * 2; // bytes offset
+        const innerLen = parseInt(hex.slice(innerOffset, innerOffset + 64), 16);
+        if (innerLen >= 4) {
+          const innerData = '0x' + hex.slice(innerOffset + 64, innerOffset + 64 + innerLen * 2);
+          const innerSelector = innerData.slice(0, 10).toLowerCase();
+          const innerKnown = KNOWN_ERROR_SELECTORS[innerSelector];
+          if (innerKnown) return `ExecutionFailed — ${innerKnown}`;
+        }
       } catch { /* fall through */ }
     }
 

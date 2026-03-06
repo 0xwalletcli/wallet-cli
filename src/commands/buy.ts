@@ -330,7 +330,8 @@ async function buyEvm(amount: string, network: Network, dryRun: boolean, provide
       console.log('  Cancelled.\n');
       return;
     }
-    await approveERC20(network, sellToken, spender, requiredAllowance);
+    const MAX_UINT256 = 2n ** 256n - 1n;
+    await approveERC20(network, sellToken, spender, MAX_UINT256);
   }
 
   // Sign and submit via provider
@@ -507,7 +508,8 @@ async function buyWsolEth(amount: string, network: Network, dryRun: boolean, pro
       console.log('  Cancelled.\n');
       return;
     }
-    await approveERC20(network, sellToken, spender, requiredAllowance);
+    const MAX_UINT256 = 2n ** 256n - 1n;
+    await approveERC20(network, sellToken, spender, MAX_UINT256);
   }
 
   // Sign and submit via provider

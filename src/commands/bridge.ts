@@ -306,7 +306,8 @@ async function bridgeEvmToSolana(
           console.log('  Cancelled.\n');
           return;
         }
-        await approveERC20(network, TOKENS[network].USDC, spender, srcAmount);
+        const MAX_UINT256 = 2n ** 256n - 1n;
+        await approveERC20(network, TOKENS[network].USDC, spender, MAX_UINT256);
       }
     }
   }
