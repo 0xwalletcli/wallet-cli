@@ -13,6 +13,7 @@ export function configShowCommand(): void {
   console.log(`\n  ── Configuration ${SEP}\n`);
   console.log(`  swap:           ${config.swapProvider}${config.swapProvider === 'auto' ? '  (default)' : ''}`);
   console.log(`  bridge:         ${config.bridgeProvider}${config.bridgeProvider === 'auto' ? '  (default)' : ''}`);
+  console.log(`  offramp:        ${config.offrampProvider}${config.offrampProvider === 'auto' ? '  (default)' : ''}`);
   console.log(`  signer.evm:     ${sc.evm}`);
   console.log(`  signer.solana:  ${sc.solana}`);
   console.log(`\n  File: ${getConfigPath()}\n`);
@@ -28,7 +29,7 @@ export function configShowCommand(): void {
 export function configSetCommand(key: string, value: string, chainOrUndefined?: string): void {
   if (!validateConfigKey(key)) {
     console.error(`  Unknown config key: "${key}".`);
-    console.error('  Valid keys: swap, bridge, signer');
+    console.error('  Valid keys: swap, bridge, offramp, signer');
     process.exit(1);
   }
 
@@ -68,6 +69,7 @@ export function configSetCommand(key: string, value: string, chainOrUndefined?: 
   const config = loadConfig();
   if (key === 'swap') config.swapProvider = value;
   if (key === 'bridge') config.bridgeProvider = value;
+  if (key === 'offramp') config.offrampProvider = value;
   if (key === 'signer') {
     // `wallet config set signer wc` — sets both chains
     config.signer = { evm: value, solana: value };
@@ -83,7 +85,7 @@ export function configSetCommand(key: string, value: string, chainOrUndefined?: 
 }
 
 export function configResetCommand(): void {
-  const defaults: WalletConfig = { swapProvider: 'auto', bridgeProvider: 'auto', signer: 'env' };
+  const defaults: WalletConfig = { swapProvider: 'auto', bridgeProvider: 'auto', offrampProvider: 'auto', signer: 'env' };
   saveConfig(defaults);
   console.log('\n  Config reset to defaults.\n');
 }

@@ -21,13 +21,13 @@ Goal: Make wallet-cli the one-stop-shop for all personal finance needs.
 - **Feature 11: Value Command** — `wallet value <amount> <token> [target]` shows USD value of any managed asset + cross-token conversion (e.g., `value 10000 usdc eth`). Staked assets resolve through base token: stETH -> ETH -> USD (rate from Lido contract `getPooledEthByShares`), JitoSOL -> SOL -> USD (rate from Jito stake pool). Supports: eth, weth, sol, wsol, wsol-eth, usdc, steth, jitosol.
 - **Feature 12: Price Fallback** — shared `src/lib/prices.ts` with CoinGecko primary + DeFi Llama fallback. All price-dependent commands (balance, value, quote, zap, health) use `fetchPrices()`. Never blocked by CoinGecko 429 rate limits. `coins.llama.fi` added to netguard allowlist.
 - **Feature 13: History Polish** — all history commands: compact single-line table format, parallel fetch (EVM + Solana via `Promise.allSettled`), clickable shortened IDs/tx hashes (OSC 8 terminal hyperlinks via `link()`/`txLink()` in format.ts), amounts displayed for all operations (Solana: parsed from pre/post balances; ETH unstake: decoded from calldata + internal txs), aligned fixed-width columns, configurable limit (`HISTORY_LIMIT` in config.ts). Bridge status normalization via STATUS_MAP (raw API states -> short display names). Solana txs resolve known token mints (USDC, JitoSOL, WSOL) instead of showing generic "SPL".
-- **Feature 17: Off-Ramp (Spritz Finance)** — `wallet withdraw <amount>` sends USDC on Ethereum to Spritz, which converts to fiat and ACH deposits to linked bank account. Subcommands: `withdraw accounts` (list linked banks), `withdraw history` (past withdrawals). Mainnet only, US only. Uses `@spritz-finance/api-client` for payment requests + web3 tx params. Netguard: `api.spritz.finance`, `platform.spritz.finance`. Env: `SPRITZ_API_KEY`.
+- **Feature 17: Off-Ramp (Multi-Provider)** — `wallet withdraw <amount>` sends USDC to fiat via configurable off-ramp providers. `OfframpProvider` interface in `src/providers/types.ts`, registry in `src/providers/registry.ts`, auto-registration via side-effect imports. Pin provider: `wallet config set offramp spritz` or auto-detect first configured provider. Subcommands: `withdraw accounts`, `withdraw history`. Current providers: Spritz Finance (WIP — account issues). Next provider: Peer/ZKP2P (decentralized, non-custodial). Mainnet only.
 
 ---
 
 ## Feature 15: Fiat On-Ramp (with 2FA)
 
-**Status:** TODO (off-ramp handled by Feature 17 via Spritz)
+**Status:** TODO (off-ramp handled by Feature 17 via multi-provider architecture)
 **Priority:** Medium (very nice to have)
 **Complexity:** High
 
@@ -128,125 +128,79 @@ Add `api.developer.coinbase.com`, `global.transak.com`, `api.moonpay.com` to `AL
 
 ---
 
-## Feature 17: Off-Ramp + Bill Pay via Spritz Finance
+## Feature 17: Off-Ramp (Multi-Provider Architecture)
 
-**Status:** Off-ramp DONE (withdraw to bank). Bill pay TODO (research complete).
-**Priority:** Medium-High (direct personal utility)
+**Status:** WIP — Architecture done, finding viable providers.
+**Priority:** High (core personal utility)
 **Complexity:** Medium
 
 ### Goal
 
 ```
-wallet pay 500 usdc --to "chase-visa"       # pay credit card bill
-wallet pay 1200 usdc --to "rent"             # pay rent / mortgage
-wallet pay list                              # list linked bill accounts
-wallet pay history                           # show past payments
+wallet withdraw 500                    # off-ramp USDC to bank via configured provider
+wallet withdraw accounts               # list linked accounts
+wallet withdraw history                # past withdrawals
+wallet config set offramp spritz       # pin a specific provider
 ```
 
-Pay real-world bills (credit cards, mortgages, utilities, student loans) directly from USDC without off-ramping to a bank first. Crypto-to-fiat conversion happens behind the scenes.
+### Architecture (DONE)
 
-### Key Constraint
+Multi-provider off-ramp using `OfframpProvider` interface (same pattern as swap/bridge):
+- `src/providers/types.ts` — `OfframpProvider`, `OfframpQuote`, `OfframpBankAccount`, `OfframpOrderSummary`
+- `src/providers/registry.ts` — `registerOfframpProvider()`, `getOfframpProvider()`, `listConfiguredOfframpProviders()`
+- `src/providers/offramp/spritz.ts` — Spritz Finance provider (first implementation)
+- `src/lib/config.ts` — `offrampProvider` config field, `resolveOfframpProvider()`
+- `src/commands/withdraw.ts` — provider-agnostic withdraw command
 
-Crypto bill pay requires a licensed intermediary that converts stablecoins to fiat and initiates ACH/wire payments to billers. The user never custodies fiat — the flow is: USDC on-chain → intermediary converts → ACH to biller.
+### Provider Status
 
-### Recommended Approach: Spritz Finance (Primary)
+| Provider | Status | Type | Fees | KYB? | 1099-DA? |
+|----------|--------|------|------|------|----------|
+| **Spritz Finance** | Implemented but account disabled | Custodial | ~1% | No (individual) | Yes >$10K |
+| **Peer/ZKP2P** | NEXT — research complete | Decentralized, non-custodial | 0% (0.5% bridge) | No | No |
+| **Transak** | Researched | Custodial (widget) | ~1% | Yes (KYB) | Yes >$10K |
+| **MoonPay** | Researched | Custodial (widget) | 1-4.5% | Yes (KYB) | Yes >$10K |
+| **Bridge.xyz** | Researched | Custodial (pure API) | Custom | Yes (KYB) | Yes >$10K |
 
-Spritz is purpose-built for this use case. 80%+ of payments on Spritz are made in USDC. They handle the crypto-to-fiat conversion and ACH delivery.
+### Next Provider: Peer/ZKP2P (peer.xyz)
+
+Decentralized P2P off-ramp using zero-knowledge proofs. Non-custodial, no KYC/KYB, no broker reporting.
 
 **How it works:**
-1. User creates Spritz account (one-time KYC)
-2. Links bill accounts via Plaid (5,000+ US financial institutions — credit cards, mortgages, utilities, student loans, auto loans)
-3. Spritz provides a payment address per linked account
-4. CLI sends USDC to that address on-chain
-5. Spritz converts to fiat and sends ACH to the biller (same-day or next-day)
+1. Deposit USDC into ZKP2P vault contract (on Base)
+2. Set exchange rate + payment method (Venmo, Zelle, CashApp, PayPal, Revolut, Wise)
+3. Buyer sends fiat via chosen payment app
+4. Buyer proves payment with ZK proof (zkTLS)
+5. Smart contract releases USDC to buyer
 
-**Developer resources:**
-- [Spritz SDK](https://github.com/spritz-finance/sdk) — TypeScript SDK
-- [Spritz API Client](https://github.com/spritz-finance/api-client) — REST API wrapper
-- [Spritz Smart Contracts](https://github.com/spritz-finance/contracts-core) — on-chain payment contracts
-- Supports Ethereum, Solana, Polygon, and 10+ chains
+**Integration approach:**
+- SDK: `@zkp2p/sdk` (browser extension based, onramp SDK exists)
+- Contracts: `github.com/zkp2p/zkp2p-contracts` (V2 escrow on Base)
+- Would need to bridge USDC from Ethereum → Base first
+- LP model (deposit + wait for buyers), not instant off-ramp
+- Docs: https://docs.peer.xyz
 
-**Limitations:**
-- US residents only
-- Requires Spritz account + KYC
-- Plaid account linking (one-time per biller)
+**Challenges:**
+- On Base (not Ethereum mainnet) — requires bridge step
+- LP model, not instant — user deposits and waits for buyers
+- Fiat arrives via Venmo/Zelle, not direct ACH
+- No headless off-ramp API yet (SDK covers onramp only)
 
-### Alternative: Method Financial (Lower-Level Rails)
+### Tax Context
 
-[Method](https://docs.methodfi.com/) provides direct API access to pay any US liability account. This is what Spritz uses under the hood via their [integration](https://methodfi.com/customers/spritz).
+- Any custodial provider is a "broker" under IRS 1099-DA rules (starting 2025)
+- **De minimis exemption:** Brokers can skip reporting if qualifying stablecoin sales < $10K/year per broker
+- USDC → USD is $0 gain regardless — 1099-DA is paperwork, not tax liability
+- Only truly decentralized protocols (ZKP2P) avoid broker classification
 
-- REST API: `POST /payments` — source bank account → destination credit card/loan
-- Supports payoff quotes from lenders directly
-- More complex (requires fiat source account, not crypto-native)
-- Enterprise-oriented, likely requires approval process
-- Better suited if we wanted to build our own bill pay without Spritz
+### Bill Pay (Future)
 
-### Alternative: Beam (getbeam.cash)
-
-- Payments API for crypto-to-fiat conversion
-- Less documentation, more business-focused
-- Not recommended over Spritz for consumer use
-
-### Implementation Plan
-
-**Phase 1: Spritz Integration**
-
-```
-wallet pay setup              # open Spritz onboarding (browser), link API key
-wallet pay link               # link a bill account via Plaid (browser flow)
-wallet pay list               # list linked accounts with nicknames
-wallet pay <amt> usdc --to <nickname>   # pay a bill
-wallet pay history            # past payments with status
-```
-
-**Flow for `wallet pay 500 usdc --to chase-visa`:**
-1. Resolve nickname → Spritz payment reference
-2. Fetch Spritz payment address for that account
-3. Preview: "Pay $500.00 USDC → Chase Visa ****1234 via Spritz"
-4. Confirm (+ 2FA if enabled from Feature 15)
-5. Send USDC on-chain to Spritz payment address (reuse existing `send` infrastructure)
-6. Poll Spritz API for payment confirmation
-7. Print: "Payment sent. ACH delivery: ~1 business day"
-
-**Phase 2: Recurring Payments (SMARTPay)**
-
-Spritz offers SMARTPay — schedule recurring payments with zero gas (single signature authorization).
-
-```
-wallet pay schedule chase-visa 500 usdc --every month --day 15
-wallet pay schedule list
-wallet pay schedule cancel <id>
-```
-
-### New Files
-
-- `src/commands/pay.ts` — bill pay command (pay, list, history, setup, link, schedule)
-- `src/lib/spritz.ts` — Spritz API client (payment creation, account listing, status polling)
+Spritz also supports bill pay (credit cards, mortgages, utilities via Plaid). This is blocked until the Spritz account issue is resolved or an alternative bill pay provider is found.
 
 ### Netguard
 
-Add `api.spritz.finance` (and any Plaid domains for account linking) to `ALLOWED_HOSTS`.
-
-### Config
-
-```json
-{
-  "spritz": {
-    "apiKey": "...",
-    "accounts": {
-      "chase-visa": { "id": "...", "label": "Chase Visa ****1234", "type": "credit_card" },
-      "rent": { "id": "...", "label": "Mortgage - Wells Fargo", "type": "mortgage" }
-    }
-  }
-}
-```
-
-### Audit
-
-Add to `wallet audit`:
-- Spritz API health check
-- Verify linked accounts are still active
-- Check payment address validity
+Current: `api.spritz.finance`, `platform.spritz.finance`
+Future: ZKP2P contract calls go through existing Base/Ethereum RPC (no new hosts needed)
 
 ---
 

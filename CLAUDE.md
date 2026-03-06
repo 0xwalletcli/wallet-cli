@@ -20,7 +20,7 @@ Default network is `mainnet`. Use `--network testnet` or `-n testnet` for testne
 - **Subcommand pattern**: swap, bridge, stake, unstake use `[args...]` variadic pattern in commander to support subcommands (`history`, `status`). The action handler checks `args[0]` for keyword routing.
 - **Solana RPC performance**: Never query signatures from high-traffic contracts (e.g., Jito stake pool). Always query the user's own address and filter results. Fetch chains in parallel with `Promise.allSettled`.
 - **When adding a new third-party integration** (API, contract, bridge, DEX): you MUST also expand `src/commands/audit.ts` to verify that service's health, prices, and/or pool liquidity. The audit is the trust gate before mainnet transactions — every external dependency must be covered.
-- **Provider abstraction**: Swap and bridge protocols are implemented as providers in `src/providers/`. Each provider implements `SwapProvider` or `BridgeProvider` from `types.ts` and auto-registers via side-effect import in `index.ts`. Commands default to `auto` mode (fetch from all providers, show comparison table, let user select). Use `wallet config set swap <id>` to pin a default, or `--route <id>` to override for a single invocation. Config stored at `~/.wallet-cli/config.json`.
+- **Provider abstraction**: Swap, bridge, and off-ramp protocols are implemented as providers in `src/providers/`. Each provider implements `SwapProvider`, `BridgeProvider`, or `OfframpProvider` from `types.ts` and auto-registers via side-effect import in `index.ts`. Commands default to `auto` mode (fetch from all providers, show comparison table, let user select). Use `wallet config set swap|bridge|offramp <id>` to pin a default, or `--route <id>` (swap/bridge) / `--provider <id>` (withdraw) to override for a single invocation. Config stored at `~/.wallet-cli/config.json`.
 - **Signer abstraction**: All signing goes through the `Signer` interface (`src/signers/types.ts`). Use `resolveSigner()` to get the active signer — never import private key helpers directly. Three signer backends: `EnvSigner` (`.env` keys), `WalletConnectSigner` (EVM via MetaMask mobile QR), `BrowserSigner` (EVM + Solana via localhost page + browser extensions). Commands accept `Signer` instead of raw keypairs. EVM: `signer.getEvmAccount()` returns a viem `LocalAccount`. Solana: `signSolanaVersionedTransaction()` for Jupiter/bridge VersionedTransactions, `signAndSendSolanaTransaction()` for legacy Transactions. For Jito ephemeral signers, `partialSign()` with ephemeral keys first, then pass to `signer.signAndSendSolanaTransaction()`. Signer is configured per-chain: `wallet config set signer evm wc`, `wallet config set signer solana browser`. EVM supports: `env`, `wc`, `browser`. Solana supports: `env`, `browser`. Config stored as `SignerConfig { evm, solana }` in `~/.wallet-cli/config.json`. If not set, defaults to `env`.
 - **History limit**: All history/txs commands cap output at `HISTORY_LIMIT` (defined once in `src/config.ts`). Change it there to update everywhere.
 - **Price fallback**: Use `fetchPrices()` from `src/lib/prices.ts` for USD pricing — it tries CoinGecko first, falls back to DeFi Llama on rate limit. Never call CoinGecko directly in new code (exception: `audit.ts` intentionally tests CoinGecko health).
@@ -34,7 +34,7 @@ Default network is `mainnet`. Use `--network testnet` or `-n testnet` for testne
 1. dotenv/config        — loads .env
 2. ./lib/netguard.js    — patches net/tls/child_process/dgram BEFORE any deps connect
 3. ./lib/txtracker.js   — SIGINT handler for pending transactions
-4. ./providers/swap/cow.js + uniswap.js + lifi.js + ./providers/bridge/debridge.js + lifi.js — auto-register providers
+4. ./providers/swap/cow.js + uniswap.js + lifi.js + ./providers/bridge/debridge.js + lifi.js + ./providers/offramp/spritz.js — auto-register providers
 5. commander + commands  — everything else
 ```
 
@@ -92,12 +92,12 @@ src/
     tokens.ts           — supported token reference (addresses, decimals, explorer links, includes WSOL)
     health.ts           — service status dashboard (RPCs, APIs, staking APR/APY, prices)
     mint.ts             — testnet faucet (SOL airdrop programmatic, ETH/USDC print URLs)
-    withdraw.ts         — withdraw USDC to bank via Spritz Finance off-ramp (Ethereum mainnet only) + accounts/history subcommands
+    withdraw.ts         — withdraw USDC to bank via off-ramp provider (multi-provider, Ethereum mainnet only) + accounts/history subcommands
     cancel.ts           — cancel pending CoW Swap orders
     address.ts          — address book management
   providers/
     types.ts            — SwapProvider, BridgeProvider interfaces + SwapQuote, BridgeQuote types
-    registry.ts         — registerSwapProvider/getBridgeProvider + listSwapProviders/listBridgeProviders
+    registry.ts         — registerSwapProvider/getBridgeProvider/registerOfframpProvider + list/get helpers for all provider types
     swap/
       cow.ts            — CoW Swap provider: EIP-712 signing, quote/submit/poll (consolidates 4x duplication)
       uniswap.ts        — Uniswap provider: Classic (on-chain) + UniswapX (gasless intent), Permit2, local order storage
@@ -105,6 +105,8 @@ src/
     bridge/
       debridge.ts       — deBridge provider: KNOWN_DLN_CONTRACTS, quote/create-tx, poll fulfillment, history/status
       lifi.ts           — LI.FI/Jumper bridge provider: cross-chain via aggregated bridges, poll via /status
+    offramp/
+      spritz.ts         — Spritz Finance off-ramp provider: USDC -> bank via ACH (WIP, account disabled — finding alternatives)
   lib/
     prices.ts           — shared price fetcher: CoinGecko primary + DeFi Llama fallback. Used by balance, value, quote, zap, health.
     jupiter.ts          — shared Jupiter API helpers: getJupiterQuote(), buildAndSendJupiterSwap(), getJupiterHistory(), mint/decimals lookup
@@ -117,7 +119,7 @@ src/
     solana.ts           — Solana connection, SOL/SPL/WSOL balance helpers, wrap/unwrap (accepts Signer)
     format.ts           — formatToken, parseTokenAmount, formatUSD, formatAddress, formatGasFee, link (OSC 8 hyperlink), txLink (shortened clickable tx hash)
     prompt.ts           — confirm(), validateAmount(), warnMainnet(), warnDryRun(), select() for provider selection
-    config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider, per-chain signer (SignerConfig { evm, solana })
+    config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider, offrampProvider, per-chain signer (SignerConfig { evm, solana })
     spritz.ts           — Spritz Finance API client: payment requests, web3 tx params, bank account listing, payment history
     addressbook.ts      — JSON-file address book (~/.wallet-cli/addresses.json)
 ```
@@ -163,7 +165,7 @@ Override with `EVM_RPC_URL` and `SOLANA_RPC_URL` env vars.
 - CoW Swap: works on both mainnet and Sepolia
 - Uniswap: works on both mainnet and Sepolia, requires UNISWAP_API_KEY
 - LI.FI/Jumper: swap (same-chain) and bridge (cross-chain), sell-only (no ExactOutput/buy orders)
-- Spritz Finance: mainnet only, US only, requires SPRITZ_API_KEY + Spritz account with linked bank
+- Off-ramp (multi-provider, WIP): Spritz Finance (mainnet, US, SPRITZ_API_KEY), Peer/ZKP2P (next, Base chain, decentralized P2P)
 - Audit gate: mainnet write commands require a passing audit within 7 days
 
 ## UX Patterns
@@ -208,9 +210,10 @@ See `FEATURES-LIST.md` for the full feature roadmap with research notes and impl
 
 ### Pending Features (in priority order)
 
-5. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
-6. **Bill pay** — pay credit cards, mortgages, utilities via Spritz (research complete, pending implementation)
-7. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
+5. **Off-ramp: Peer/ZKP2P** — next off-ramp provider (decentralized P2P, non-custodial, no KYB, Base chain). Architecture ready, needs SDK integration.
+6. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
+7. **Bill pay** — pay credit cards, mortgages, utilities via off-ramp provider (blocked on viable provider)
+8. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
 
 ## Environment Variables (.env)
 

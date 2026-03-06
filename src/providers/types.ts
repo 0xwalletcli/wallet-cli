@@ -149,3 +149,60 @@ export interface BridgeProvider {
     dstTxHash?: string;
   }>;
 }
+
+// ── Offramp Provider ────────────────────────────────
+
+export interface OfframpBankAccount {
+  id: string;
+  label: string;        // display name (institution + last 4)
+  institution?: string;
+  accountNumber?: string;
+  type?: string;         // checking, savings, etc.
+}
+
+export interface OfframpQuote {
+  provider: string;
+  amount: string;              // USDC amount (human-readable)
+  amountRaw: string;           // raw amount (wei/smallest unit)
+  bankAccountId: string;
+  bankAccountLabel: string;
+  fee?: string;                // fee description
+  estimatedTime?: string;      // e.g. "1 business day"
+  txParams: {                  // on-chain tx parameters
+    to: string;
+    data: string;
+    value?: string;
+    gasLimit?: string;
+  };
+  _raw: unknown;
+}
+
+export interface OfframpOrderSummary {
+  id: string;
+  amount: string;         // human-readable
+  status: string;
+  createdAt: string;      // ISO date
+  provider: string;
+}
+
+export interface OfframpProvider {
+  id: string;
+  displayName: string;
+
+  /** Check if provider is configured (API keys set, etc.) */
+  isConfigured(): boolean;
+
+  /** List linked bank accounts / payout destinations */
+  listAccounts(): Promise<OfframpBankAccount[]>;
+
+  /** Get a quote / build transaction for withdrawal */
+  getQuote(params: {
+    amount: string;
+    bankAccountId: string;
+    tokenAddress: string;
+    network: string;
+  }): Promise<OfframpQuote>;
+
+  /** Get recent withdrawal history */
+  getHistory(): Promise<OfframpOrderSummary[]>;
+}

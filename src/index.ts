@@ -7,6 +7,7 @@ import './providers/swap/uniswap.js';  // register Uniswap provider
 import './providers/swap/lifi.js';     // register LI.FI swap provider
 import './providers/bridge/debridge.js'; // register deBridge provider
 import './providers/bridge/lifi.js';   // register LI.FI bridge provider
+import './providers/offramp/spritz.js'; // register Spritz offramp provider
 import { Command } from 'commander';
 import { type Network, HISTORY_LIMIT } from './config.js';
 import { checkAuditGate } from './lib/auditgate.js';
@@ -429,15 +430,16 @@ program
 // wallet withdraw [args...]
 program
   .command('withdraw [args...]')
-  .description('Withdraw USDC to bank account via Spritz (e.g., withdraw 500)')
+  .description('Withdraw USDC to bank account via off-ramp provider (e.g., withdraw 500)')
   .addHelpText('after', `
   Usage:
     withdraw <amount>          Withdraw USDC to linked bank account
-    withdraw accounts          List linked bank accounts
+    withdraw accounts          List linked accounts from provider
     withdraw history           Recent withdrawals
 
-  Mainnet only. Requires SPRITZ_API_KEY in .env.
-  Link bank accounts at https://app.spritz.finance
+  Mainnet only. Configure provider: wallet config set offramp spritz
+  Providers: Spritz Finance (requires SPRITZ_API_KEY in .env)
+  More providers coming soon (Peer/ZKP2P, Transak, MoonPay).
 
   Examples:
     wallet withdraw 500

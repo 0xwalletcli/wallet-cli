@@ -124,9 +124,9 @@ wallet zap history
 
 When you want to cash out:
 
-### Option A: Withdraw USDC directly to bank (Spritz)
+### Option A: Withdraw USDC directly to bank (off-ramp)
 
-No CEX needed — USDC goes straight to your linked bank account via ACH.
+No CEX needed — USDC goes straight to your linked bank account via configured off-ramp provider.
 
 ```bash
 # List linked bank accounts
@@ -193,7 +193,7 @@ wallet balance
 |--------|----------|
 | USDC -> stETH | CoW/Uniswap/LI.FI + Lido (~3% APR) |
 | USDC -> JitoSOL | deBridge/LI.FI/Jupiter + Jito (~7% APR) |
-| USDC -> Bank (off-ramp) | Spritz Finance (ACH, ~1 business day) |
+| USDC -> Bank (off-ramp) | Multi-provider: Spritz (ACH), Peer/ZKP2P (P2P, coming soon) |
 
 ## Tips
 

@@ -15,7 +15,7 @@ CLI tool for managing crypto without centralized exchanges.
 - **Transactions** history across Ethereum + Solana with clickable explorer links
 - **Wrap/Unwrap** native assets: ETH ↔ WETH, SOL ↔ WSOL
 - **Audit** all integrations before mainnet transactions (prices, pools, contracts, APIs)
-- **Withdraw** USDC to your bank account via [Spritz Finance](https://spritz.finance) (off-ramp, no CEX)
+- **Withdraw** USDC to your bank account (off-ramp, multi-provider — no CEX)
 - **Connect** MetaMask, Coinbase Wallet, Phantom (EVM via WalletConnect or browser extension; Solana via browser extension) — sign transactions without storing private keys
 - **Address book** for human-readable wallet names
 - **Price fallback** — CoinGecko primary, DeFi Llama fallback (never blocked by rate limits)
@@ -79,8 +79,8 @@ ETHERSCAN_API_KEY=
 UNISWAP_API_KEY=               # free key from https://developers.uniswap.org
 LIFI_API_KEY=                  # increases LI.FI rate limit (200 req/2hr → 200 req/min)
 
-# Off-ramp (withdraw USDC to bank)
-SPRITZ_API_KEY=                # API key from https://app.spritz.finance
+# Off-ramp (withdraw USDC to bank — multi-provider, WIP)
+SPRITZ_API_KEY=                # Spritz Finance: https://app.spritz.finance
 ```
 
 ## Quick Start
@@ -234,7 +234,7 @@ wallet unstake 10 jitosol --run
 # List linked bank accounts
 wallet withdraw accounts
 
-# Withdraw USDC to your bank via Spritz (dry-run first)
+# Withdraw USDC to your bank (dry-run first)
 wallet withdraw 500
 wallet withdraw 500 --run
 
@@ -299,7 +299,7 @@ wallet withdraw history        # recent withdrawals
 | `wallet tokens` | Show supported tokens, addresses, and explorer links |
 | `wallet mint <token> [amount]` | Get testnet tokens — `mint eth`, `mint usdc` (faucet links), `mint sol 2` (airdrop) |
 | `wallet approve <token> <spender> <amt>` | ERC-20 approval helper |
-| `wallet withdraw <amount>` | Withdraw USDC to bank account via Spritz (off-ramp, mainnet only) |
+| `wallet withdraw <amount>` | Withdraw USDC to bank account (off-ramp, multi-provider, mainnet only) |
 | `wallet withdraw accounts` | List linked bank accounts |
 | `wallet withdraw history` | Recent withdrawals |
 | `wallet cancel [orderId]` | Cancel a pending CoW Swap order |
@@ -344,14 +344,14 @@ wallet withdraw history        # recent withdrawals
 ## Security
 
 - **Audit gate** — mainnet write commands are blocked unless a passing `wallet audit` has been run within the last 7 days. The audit verifies all integrated services, price sanity, pool health, stETH/ETH ratio, and USDC peg stability.
-- **Network egress guard** — all outbound connections are restricted to a whitelist of known hosts (RPCs, CoW, deBridge, Jupiter, Uniswap, LI.FI, Spritz, CoinGecko, DeFi Llama). Even if an npm dependency is compromised, it cannot phone home with your keys.
+- **Network egress guard** — all outbound connections are restricted to a whitelist of known hosts (RPCs, CoW, deBridge, Jupiter, Uniswap, LI.FI, Spritz, Peer/ZKP2P, CoinGecko, DeFi Llama). Even if an npm dependency is compromised, it cannot phone home with your keys.
 - **`child_process` disabled** — prevents subprocess-based exfiltration (`curl`, `wget`, etc.)
 - **UDP sockets blocked** — prevents DNS-tunneling exfiltration
 - **Install scripts disabled** (`.npmrc: ignore-scripts=true`) — prevents `postinstall` attacks
 - **Signer abstraction** — pluggable per-chain signing: `.env` keys (default), WalletConnect for EVM (mobile QR), browser bridge for EVM + Solana (MetaMask, Coinbase Wallet, Phantom, Solflare, Backpack) — private keys never touch disk
 - Private keys stay in `.env` on your machine — never sent anywhere (or use WalletConnect/browser to avoid storing keys entirely)
 - All transactions require explicit `[y/N]` confirmation before signing
-- ERC-20 approvals are always exact amounts (never infinite)
+- ERC-20 approvals use infinite allowance (reduces repeated approval transactions)
 - Mainnet operations show a warning banner
 - Bridge validates contract addresses against known deBridge DLN contracts
 - Balances are checked before attempting transactions
@@ -371,7 +371,7 @@ wallet withdraw history        # recent withdrawals
 | **Stake SOL** | Jito | SOL -> JitoSOL, liquid staking + MEV rewards (~7% APR) |
 | **Unstake ETH** | Lido | stETH -> request withdrawal (1-5 day queue) -> claim ETH |
 | **Unstake SOL** | Jito | JitoSOL -> SOL, instant via SPL stake pool |
-| **Withdraw** | Spritz Finance | USDC -> fiat ACH to linked bank account (off-ramp) |
+| **Withdraw** | Multi-provider | USDC -> fiat to bank account (off-ramp, configurable provider) |
 | **Send** | Direct transfer | ETH/ERC-20 or SOL/SPL transfer to any address |
 | **Wrap/Unwrap** | WETH / WSOL | Native assets (ETH/SOL) to ERC-20/SPL equivalents and back |
 | **Zap** | Multi-platform | USDC -> stETH (swap+Lido) or USDC -> JitoSOL (bridge+Jito) |
@@ -380,7 +380,7 @@ wallet withdraw history        # recent withdrawals
 
 ## Provider Architecture
 
-Swap and bridge protocols are pluggable providers behind a common interface. By default (`auto`), commands fetch quotes from **all** available providers, show a comparison table, and let you select. Use `wallet config set swap <id>` or `--route <id>` to pin a specific provider.
+Swap, bridge, and off-ramp protocols are pluggable providers behind a common interface. By default (`auto`), commands fetch quotes from **all** available providers, show a comparison table, and let you select. Use `wallet config set swap|bridge|offramp <id>` or `--route <id>` / `--provider <id>` to pin a specific provider.
 
 | Type | Provider | Notes |
 |------|----------|-------|
@@ -391,8 +391,9 @@ Swap and bridge protocols are pluggable providers behind a common interface. By 
 | **Bridge** | [deBridge](https://debridge.finance) | Cross-chain ETH/USDC/SOL both ways |
 | **Bridge** | [LI.FI/Jumper](https://li.fi) | Cross-chain bridge aggregator |
 | **Off-ramp** | [Spritz Finance](https://spritz.finance) | USDC -> bank account via ACH (US, mainnet only) |
+| **Off-ramp** | [Peer/ZKP2P](https://peer.xyz) | Decentralized P2P off-ramp via Zelle/Venmo (Base chain, coming soon) |
 
-Provider resolution order: `--route` flag > `wallet config` setting > `auto` (all providers).
+Provider resolution order: `--route`/`--provider` flag > `wallet config` setting > `auto` (all providers).
 
 ## Price Sources
 

@@ -5,23 +5,46 @@ import { parseTokenAmount, formatToken, formatUSD } from '../lib/format.js';
 import { confirm, validateAmount, warnMainnet, warnDryRun } from '../lib/prompt.js';
 import { trackTx, clearTx } from '../lib/txtracker.js';
 import { BalanceTracker, evmTokens } from '../lib/balancedelta.js';
-import { listBankAccounts, createPaymentRequest, getWeb3PaymentParams, getPaymentHistory } from '../lib/spritz.js';
+import { resolveOfframpProvider } from '../lib/config.js';
+import { getOfframpProvider, listConfiguredOfframpProviders } from '../providers/registry.js';
+import type { OfframpProvider } from '../providers/types.js';
+
+function resolveProvider(providerFlag?: string): OfframpProvider {
+  const resolved = resolveOfframpProvider(providerFlag);
+
+  if (resolved !== 'auto') {
+    return getOfframpProvider(resolved);
+  }
+
+  // Auto: pick the first configured provider
+  const configured = listConfiguredOfframpProviders();
+  if (configured.length === 0) {
+    console.error('  No offramp providers configured.');
+    console.error('  Set SPRITZ_API_KEY in .env for Spritz Finance.');
+    console.error('  More providers coming soon (Peer/ZKP2P, Transak, MoonPay).');
+    process.exit(1);
+  }
+  return configured[0];
+}
 
 export async function withdrawCommand(
   amountStr: string,
   network: Network,
   dryRun: boolean,
+  providerFlag?: string,
 ) {
   validateAmount(amountStr);
   const amount = Number(amountStr);
 
   if (network !== 'mainnet') {
-    console.error('  Withdraw is mainnet only (Spritz does not support testnet).');
+    console.error('  Withdraw is mainnet only (off-ramp providers do not support testnet).');
     process.exit(1);
   }
 
+  const provider = resolveProvider(providerFlag);
+
   if (dryRun) warnDryRun();
-  console.log(`  Withdraw: ${amountStr} USDC -> bank account via Spritz`);
+  console.log(`  Withdraw: ${amountStr} USDC -> bank account via ${provider.displayName}`);
   console.log(`  Chain: Ethereum ${network}`);
   warnMainnet(network, dryRun);
 
@@ -32,27 +55,24 @@ export async function withdrawCommand(
   const explorer = EXPLORERS[network];
 
   console.log(`  From: ${account.address}`);
-  console.log('  Fetching bank accounts...');
+  console.log('  Fetching accounts...');
 
-  // List bank accounts and let user pick
-  const accounts = await listBankAccounts();
+  // List accounts and let user pick
+  const accounts = await provider.listAccounts();
   if (!accounts || accounts.length === 0) {
-    console.error('  No bank accounts linked in Spritz. Add one at https://app.spritz.finance');
+    console.error(`  No accounts linked in ${provider.displayName}. Set up your account with the provider first.`);
     process.exit(1);
   }
 
-  console.log('\n  Linked bank accounts:');
+  console.log('\n  Linked accounts:');
   for (let i = 0; i < accounts.length; i++) {
     const acct = accounts[i];
-    const label = acct.name || acct.institution?.name || acct.holder || 'Bank Account';
-    const lastFour = acct.accountNumber ? ` ****${acct.accountNumber.slice(-4)}` : '';
-    console.log(`    ${i + 1}. ${label}${lastFour}`);
+    const last4 = acct.accountNumber ? ` ****${acct.accountNumber.slice(-4)}` : '';
+    console.log(`    ${i + 1}. ${acct.label}${last4}`);
   }
 
-  let selectedAccount: typeof accounts[0];
-  if (accounts.length === 1) {
-    selectedAccount = accounts[0];
-  } else {
+  let selectedAccount = accounts[0];
+  if (accounts.length > 1) {
     const { select } = await import('../lib/prompt.js');
     const choice = await select('Select account', accounts.length);
     if (choice === 0) {
@@ -62,8 +82,7 @@ export async function withdrawCommand(
     selectedAccount = accounts[choice - 1];
   }
 
-  const acctLabel = selectedAccount.name || selectedAccount.institution?.name || selectedAccount.holder || 'Bank Account';
-  const lastFour = selectedAccount.accountNumber ? ` ****${selectedAccount.accountNumber.slice(-4)}` : '';
+  const last4 = selectedAccount.accountNumber ? ` ****${selectedAccount.accountNumber.slice(-4)}` : '';
 
   console.log('  Checking USDC balance...');
   const balance = await getERC20Balance(network, tokens.USDC, account.address);
@@ -75,19 +94,18 @@ export async function withdrawCommand(
     insufficientBalance = true;
   }
 
-  console.log('  Creating payment request...');
-  const paymentRequest = await createPaymentRequest(
-    (selectedAccount as any).id,
-    amount,
-    tokens.USDC,
-  );
-
-  console.log('  Fetching transaction parameters...');
-  const txParams = await getWeb3PaymentParams(paymentRequest, tokens.USDC);
+  console.log('  Fetching quote...');
+  const quote = await provider.getQuote({
+    amount: amountStr,
+    bankAccountId: selectedAccount.id,
+    tokenAddress: tokens.USDC,
+    network,
+  });
 
   console.log(`\n  You withdraw:  ${amountStr} USDC`);
-  console.log(`  To:            ${acctLabel}${lastFour}`);
-  console.log(`  Via:           Spritz Finance`);
+  console.log(`  To:            ${selectedAccount.label}${last4}`);
+  console.log(`  Via:           ${provider.displayName}`);
+  if (quote.estimatedTime) console.log(`  ETA:           ${quote.estimatedTime}`);
   console.log(`  Chain:         Ethereum ${network}\n`);
 
   const tracker = new BalanceTracker(evmTokens(network, account.address, ['USDC', 'ETH']));
@@ -114,13 +132,12 @@ export async function withdrawCommand(
   const wallet = await getWalletClient(network);
 
   try {
-    const web3Params = txParams as any;
     const hash = await wallet.sendTransaction({
       account,
-      to: web3Params.contractAddress as `0x${string}`,
-      data: web3Params.calldata as `0x${string}`,
-      value: web3Params.value ? BigInt(web3Params.value) : 0n,
-      ...(web3Params.suggestedGasLimit ? { gas: BigInt(web3Params.suggestedGasLimit) } : {}),
+      to: quote.txParams.to as `0x${string}`,
+      data: quote.txParams.data as `0x${string}`,
+      value: quote.txParams.value ? BigInt(quote.txParams.value) : 0n,
+      ...(quote.txParams.gasLimit ? { gas: BigInt(quote.txParams.gasLimit) } : {}),
     });
     trackTx(hash, 'evm', network);
     console.log(`  TX:  ${hash}`);
@@ -128,7 +145,7 @@ export async function withdrawCommand(
     console.log('  Waiting for confirmation...');
     await waitForReceipt(network, hash);
     clearTx();
-    console.log('  Transaction confirmed. Spritz will process the ACH transfer (~1 business day).');
+    console.log('  Transaction confirmed. The provider will process the transfer.');
   } catch (err: any) {
     clearTx();
     console.error(`  Withdraw failed: ${err.message}`);
@@ -138,66 +155,39 @@ export async function withdrawCommand(
   console.log('');
 }
 
-export async function withdrawHistoryCommand() {
-  console.log('  Fetching withdrawal history from Spritz...\n');
+export async function withdrawHistoryCommand(providerFlag?: string) {
+  const provider = resolveProvider(providerFlag);
+  console.log(`  Fetching withdrawal history from ${provider.displayName}...\n`);
 
-  const accounts = await listBankAccounts();
-  if (!accounts || accounts.length === 0) {
-    console.log('  No bank accounts linked.\n');
-    return;
-  }
-
-  let allPayments: any[] = [];
-  for (const acct of accounts) {
-    try {
-      const payments = await getPaymentHistory((acct as any).id);
-      if (Array.isArray(payments)) {
-        allPayments = allPayments.concat(payments);
-      }
-    } catch { /* skip accounts with no history */ }
-  }
-
-  if (allPayments.length === 0) {
+  const history = await provider.getHistory();
+  if (history.length === 0) {
     console.log('  No withdrawal history found.\n');
     return;
   }
 
-  // Sort by date descending
-  allPayments.sort((a: any, b: any) => {
-    const dateA = new Date(a.createdAt || a.created || 0).getTime();
-    const dateB = new Date(b.createdAt || b.created || 0).getTime();
-    return dateB - dateA;
-  });
-
-  const limit = 10;
-  const shown = allPayments.slice(0, limit);
-
   console.log('  Recent withdrawals:\n');
-  for (const p of shown) {
-    const date = new Date(p.createdAt || p.created || 0).toLocaleDateString('en-US', {
+  for (const p of history) {
+    const date = new Date(p.createdAt).toLocaleDateString('en-US', {
       month: 'short', day: 'numeric', year: 'numeric',
     });
-    const amount = p.amount ? formatUSD(p.amount / 100) : '?';
-    const status = (p.status || 'unknown').toLowerCase();
-    console.log(`    ${date}  ${amount.padStart(12)}  ${status}`);
+    console.log(`    ${date}  ${p.amount.padStart(12)}  ${p.status}`);
   }
   console.log('');
 }
 
-export async function withdrawAccountsCommand() {
-  console.log('  Fetching linked bank accounts from Spritz...\n');
+export async function withdrawAccountsCommand(providerFlag?: string) {
+  const provider = resolveProvider(providerFlag);
+  console.log(`  Fetching linked accounts from ${provider.displayName}...\n`);
 
-  const accounts = await listBankAccounts();
+  const accounts = await provider.listAccounts();
   if (!accounts || accounts.length === 0) {
-    console.log('  No bank accounts linked. Add one at https://app.spritz.finance\n');
+    console.log(`  No accounts linked. Set up your account with ${provider.displayName} first.\n`);
     return;
   }
 
   for (const acct of accounts) {
-    const label = acct.name || acct.institution?.name || acct.holder || 'Bank Account';
     const last4 = acct.accountNumber ? ` ****${acct.accountNumber.slice(-4)}` : '';
-    const type = acct.bankAccountSubType || acct.bankAccountType || '';
-    console.log(`    ${label}${last4}  (${type})`);
+    console.log(`    ${acct.label}${last4}  (${acct.type || ''})`);
   }
   console.log('');
 }
