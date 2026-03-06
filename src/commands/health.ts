@@ -1,8 +1,8 @@
-import { createPublicClient, http, parseAbi } from 'viem';
+import { createPublicClient, http, parseAbi, type Chain } from 'viem';
 import { mainnet, sepolia } from 'viem/chains';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
-import { DEBRIDGE_CONFIG, COW_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, JUPITER_CONFIG, SOLANA_CONFIG, TOKENS, LIDO_CONFIG, JITO_CONFIG, STAKING_URLS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmRpcUrl } from '../config.js';
+import { DEBRIDGE_CONFIG, COW_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, JUPITER_CONFIG, SOLANA_CONFIG, TOKENS, LIDO_CONFIG, JITO_CONFIG, STAKING_URLS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmRpcUrl, getEvmChain } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { formatToken } from '../lib/format.js';
 import { listSwapProviders } from '../providers/registry.js';
@@ -34,6 +34,21 @@ async function checkEvmRpc(network: 'mainnet' | 'testnet'): Promise<CheckResult>
     const client = createPublicClient({
       chain: network === 'mainnet' ? mainnet : sepolia,
       transport: http(getEvmRpcUrl(network)),
+    });
+    const block = await withTimeout(client.getBlockNumber(), TIMEOUT);
+    const latency = Date.now() - start;
+    return { status: latency > 2000 ? 'SLOW' : 'OK', detail: `block ${block}`, latency };
+  } catch {
+    return { status: 'DOWN', latency: Date.now() - start };
+  }
+}
+
+async function checkBaseRpc(network: 'mainnet' | 'testnet'): Promise<CheckResult> {
+  const start = Date.now();
+  try {
+    const client = createPublicClient({
+      chain: getEvmChain(network, 'base') as Chain,
+      transport: http(getEvmRpcUrl(network, 'base')),
     });
     const block = await withTimeout(client.getBlockNumber(), TIMEOUT);
     const latency = Date.now() - start;
@@ -182,6 +197,21 @@ async function checkLifi(): Promise<CheckResult> {
     const res = await withTimeout(fetch(`${LIFI_CONFIG.api}/chains`), TIMEOUT);
     const latency = Date.now() - start;
     return { status: latency > 2000 ? 'SLOW' : res.ok ? 'OK' : 'DOWN', latency };
+  } catch {
+    return { status: 'DOWN', latency: Date.now() - start };
+  }
+}
+
+async function checkSpritz(): Promise<CheckResult> {
+  const apiKey = process.env.SPRITZ_API_KEY;
+  if (!apiKey) return { status: 'DOWN', detail: 'no API key' };
+  const start = Date.now();
+  try {
+    const { getSpritzClient } = await import('../lib/spritz.js');
+    const client = getSpritzClient();
+    const accounts = await withTimeout(client.bankAccount.list(), TIMEOUT);
+    const latency = Date.now() - start;
+    return { status: latency > 2000 ? 'SLOW' : 'OK', detail: `${accounts.length} bank account(s)`, latency };
   } catch {
     return { status: 'DOWN', latency: Date.now() - start };
   }
@@ -363,10 +393,12 @@ export async function healthCommand() {
   console.log('  Checking services...\n');
 
   // Run all checks in parallel
-  const [evmMain, evmTest, solMain, solTest, cow, uniswap, lifi, debridge, jupiter, etherscan, lido, jito, market, swapPrices, bridgePrices, jupSol, lidoApr, jitoApy] =
+  const [evmMain, evmTest, baseMain, baseTest, solMain, solTest, cow, uniswap, lifi, debridge, jupiter, etherscan, spritz, lido, jito, market, swapPrices, bridgePrices, jupSol, lidoApr, jitoApy] =
     await Promise.all([
       checkEvmRpc('mainnet'),
       checkEvmRpc('testnet'),
+      checkBaseRpc('mainnet'),
+      checkBaseRpc('testnet'),
       checkSolanaRpc('mainnet'),
       checkSolanaRpc('testnet'),
       checkCowSwap(),
@@ -375,6 +407,7 @@ export async function healthCommand() {
       checkDeBridge(),
       checkJupiter(),
       checkEtherscan(),
+      checkSpritz(),
       checkLido(),
       checkJito(),
       getMarketPrices(),
@@ -389,6 +422,8 @@ export async function healthCommand() {
   const allChecks: { label: string; result: CheckResult; extra?: string }[] = [
     { label: 'Ethereum mainnet', result: evmMain },
     { label: 'Ethereum testnet', result: evmTest },
+    { label: 'Base mainnet', result: baseMain },
+    { label: 'Base testnet', result: baseTest },
     { label: 'Solana mainnet', result: solMain },
     { label: 'Solana testnet', result: solTest },
     { label: 'CoW Swap', result: cow },
@@ -397,6 +432,7 @@ export async function healthCommand() {
     { label: 'deBridge', result: debridge },
     { label: 'Jupiter', result: jupiter },
     { label: 'Etherscan', result: etherscan },
+    { label: 'Spritz (off-ramp)', result: spritz },
     { label: 'Lido (stETH)', result: lido, extra: lido.status !== 'DOWN' && lidoApr != null ? `APR ${lidoApr.toFixed(2)}%` : undefined },
     { label: 'Jito (JitoSOL)', result: jito, extra: jito.status !== 'DOWN' && jitoApy != null ? `APY ${(jitoApy * 100).toFixed(2)}%` : undefined },
   ];
@@ -416,15 +452,15 @@ export async function healthCommand() {
 
   // RPCs
   console.log(`  ── RPCs ${SEP}`);
-  printAligned(0); printAligned(1); printAligned(2); printAligned(3);
+  printAligned(0); printAligned(1); printAligned(2); printAligned(3); printAligned(4); printAligned(5);
 
   // Exchanges & Bridges
   console.log(`\n  ── Exchanges & Bridges ${SEP}`);
-  printAligned(4); printAligned(5); printAligned(6); printAligned(7); printAligned(8); printAligned(9);
+  printAligned(6); printAligned(7); printAligned(8); printAligned(9); printAligned(10); printAligned(11); printAligned(12);
 
   // Staking
   console.log(`\n  ── Staking ${SEP}`);
-  printAligned(10); printAligned(11);
+  printAligned(13); printAligned(14);
 
   // Prices — execution vs market
   console.log(`\n  ── Prices ${SEP}`);

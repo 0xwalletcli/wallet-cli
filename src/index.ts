@@ -7,6 +7,7 @@ import './providers/swap/uniswap.js';  // register Uniswap provider
 import './providers/swap/lifi.js';     // register LI.FI swap provider
 import './providers/bridge/debridge.js'; // register deBridge provider
 import './providers/bridge/lifi.js';   // register LI.FI bridge provider
+import './providers/offramp/spritz.js'; // register Spritz offramp provider
 import { Command } from 'commander';
 import { type Network, HISTORY_LIMIT } from './config.js';
 import { checkAuditGate } from './lib/auditgate.js';
@@ -68,11 +69,13 @@ program
   .description('Show USD value or convert between tokens (e.g., value 0.01 eth, value 10000 usdc eth)')
   .addHelpText('after', `
   Supported tokens:
-    eth, weth, sol, wsol, wsol-eth, usdc, steth, jitosol
+    eth, weth, eth-base, sol, wsol, wsol-eth, usdc, usdc-base, steth, jitosol
 
   Examples:
     wallet value 0.01 eth           Show USD value of 0.01 ETH
+    wallet value 0.5 eth-base       Show USD value of 0.5 ETH on Base
     wallet value 100 usdc           Show USD value of 100 USDC
+    wallet value 100 usdc-base      Show USD value of 100 USDC on Base
     wallet value 1.5 steth          Show ETH + USD value of 1.5 stETH
     wallet value 10 jitosol         Show SOL + USD value of 10 JitoSOL
     wallet value 10000 usdc eth     How much ETH is 10,000 USDC?
@@ -91,16 +94,14 @@ program
   .option('--route <id>', 'swap provider (cow, uniswap, lifi, or auto)')
   .addHelpText('after', `
   Supported pairs:
-    usdc -> eth        Sell USDC for ETH (Ethereum)
-    eth -> usdc        Sell ETH for USDC (Ethereum)
-    usdc -> wsol-eth   Sell USDC for WSOL-ETH (Ethereum)
-    wsol-eth -> usdc   Sell WSOL-ETH for USDC (Ethereum)
-    eth -> wsol-eth    Sell ETH for WSOL-ETH (Ethereum)
-    wsol-eth -> eth    Sell WSOL-ETH for ETH (Ethereum)
-    usdc -> sol        Sell USDC for SOL (Solana, Jupiter)
-    sol -> usdc        Sell SOL for USDC (Solana, Jupiter)
+    Ethereum (CoW Swap / Uniswap / LI.FI):
+      usdc <-> eth, usdc <-> wsol-eth, eth <-> wsol-eth
+    Base (LI.FI):
+      usdc-base <-> eth-base
+    Solana (Jupiter):
+      usdc <-> sol
 
-  Providers: CoW Swap, Uniswap, LI.FI (Ethereum) / Jupiter (Solana)
+  Providers: CoW Swap, Uniswap, LI.FI (Ethereum) / LI.FI (Base) / Jupiter (Solana)
   Default: auto (compare all, select)
   Override: --route cow
 
@@ -137,13 +138,15 @@ program
   .option('--route <id>', 'bridge provider (debridge, lifi, or auto)')
   .addHelpText('after', `
   Supported bridges:
-    eth -> sol         Ethereum ETH to Solana SOL
-    usdc -> sol        Ethereum USDC to Solana SOL
-    usdc -> usdc-sol   Ethereum USDC to Solana USDC
-    sol -> eth         Solana SOL to Ethereum ETH
-    sol -> usdc        Solana SOL to Ethereum USDC
-    usdc-sol -> usdc   Solana USDC to Ethereum USDC
-    usdc-sol -> eth    Solana USDC to Ethereum ETH
+    Ethereum <-> Solana:
+      eth -> sol, usdc -> sol, usdc -> usdc-sol
+      sol -> eth, sol -> usdc, usdc-sol -> usdc, usdc-sol -> eth
+    Ethereum <-> Base:
+      eth -> eth-base, usdc -> usdc-base, eth -> usdc-base, usdc -> eth-base
+      eth-base -> eth, usdc-base -> usdc, eth-base -> usdc, usdc-base -> eth
+    Base <-> Solana:
+      eth-base -> sol, usdc-base -> sol, usdc-base -> usdc-sol
+      sol -> eth-base, sol -> usdc-base, usdc-sol -> usdc-base
 
   Providers: deBridge, LI.FI
   Default: auto (compare all, select)
@@ -184,6 +187,8 @@ program
     eth        Buy ETH with USDC (Ethereum)
     sol        Buy SOL with USDC via Jupiter (Solana)
     wsol-eth   Buy WSOL-ETH with USDC (Wormhole SOL on Ethereum)
+    eth-base   Use: bridge <amt> eth eth-base, or swap usdc-base eth-base
+    usdc-base  Use: bridge <amt> usdc usdc-base
 
   Providers: CoW Swap, Uniswap, LI.FI (sell-only)
   Default: auto (compare all, select)
@@ -211,7 +216,7 @@ program
 // wallet send <amount> <token> <recipient>
 program
   .command('send <amount> <token> <recipient>')
-  .description('Send tokens to a wallet (e.g., send 0.5 eth coinbase-eth)')
+  .description('Send tokens to a wallet (eth, usdc, wsol-eth, eth-base, usdc-base, sol, wsol)')
   .action(timed(async (amount: string, token: string, recipient: string) => {
     checkAuditGate(getNetwork(program), getDryRun(program));
     const { sendCommand } = await import('./commands/send.js');
@@ -424,6 +429,46 @@ program
   .action(timed(async (orderId?: string) => {
     const { cancelCommand } = await import('./commands/cancel.js');
     await cancelCommand(orderId, getNetwork(program));
+  }));
+
+// wallet withdraw [args...]
+program
+  .command('withdraw [args...]')
+  .description('Withdraw USDC to bank account via off-ramp provider (e.g., withdraw 500)')
+  .addHelpText('after', `
+  Usage:
+    withdraw <amount>          Withdraw USDC to linked bank account
+    withdraw accounts          List linked accounts from provider
+    withdraw history           Recent withdrawals
+
+  Mainnet only. Configure provider: wallet config set offramp spritz
+  Providers: Spritz Finance (requires SPRITZ_API_KEY in .env)
+  More providers coming soon (Peer/ZKP2P, Transak, MoonPay).
+
+  Examples:
+    wallet withdraw 500
+    wallet withdraw 1000 --run
+    wallet withdraw accounts
+    wallet withdraw history
+`)
+  .action(timed(async (args: string[]) => {
+    if (args[0] === 'history') {
+      const { withdrawHistoryCommand } = await import('./commands/withdraw.js');
+      await withdrawHistoryCommand();
+    } else if (args[0] === 'accounts') {
+      const { withdrawAccountsCommand } = await import('./commands/withdraw.js');
+      await withdrawAccountsCommand();
+    } else if (args.length === 1) {
+      checkAuditGate(getNetwork(program), getDryRun(program));
+      const { withdrawCommand } = await import('./commands/withdraw.js');
+      await withdrawCommand(args[0], getNetwork(program), getDryRun(program));
+    } else {
+      console.error('  Usage: wallet withdraw <amount>');
+      console.error('         wallet withdraw accounts');
+      console.error('         wallet withdraw history');
+      console.error('         wallet withdraw --help');
+      process.exit(1);
+    }
   }));
 
 // wallet audit

@@ -1,4 +1,4 @@
-import type { SwapProvider, BridgeProvider } from './types.js';
+import type { SwapProvider, BridgeProvider, OfframpProvider } from './types.js';
 
 // ── Swap Providers ───────────────────────────────────
 
@@ -34,4 +34,27 @@ export function getBridgeProvider(id: string): BridgeProvider {
 
 export function listBridgeProviders(): BridgeProvider[] {
   return [...bridgeProviders.values()];
+}
+
+// ── Offramp Providers ───────────────────────────────
+
+const offrampProviders = new Map<string, OfframpProvider>();
+
+export function registerOfframpProvider(provider: OfframpProvider): void {
+  offrampProviders.set(provider.id, provider);
+}
+
+export function getOfframpProvider(id: string): OfframpProvider {
+  const p = offrampProviders.get(id);
+  if (!p) throw new Error(`Unknown offramp provider: ${id}. Available: ${[...offrampProviders.keys()].join(', ')}`);
+  return p;
+}
+
+export function listOfframpProviders(): OfframpProvider[] {
+  return [...offrampProviders.values()];
+}
+
+/** List only configured offramp providers (API keys set) */
+export function listConfiguredOfframpProviders(): OfframpProvider[] {
+  return [...offrampProviders.values()].filter(p => p.isConfigured());
 }

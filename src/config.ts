@@ -1,7 +1,8 @@
 // dotenv loaded in index.ts before netguard
-import { mainnet, sepolia } from 'viem/chains';
+import { mainnet, sepolia, base, baseSepolia } from 'viem/chains';
 
 export type Network = 'mainnet' | 'testnet';
+export type EvmChain = 'ethereum' | 'base';
 
 /** Max items returned by any history / txs command. Single source of truth. */
 export const HISTORY_LIMIT = 10;
@@ -11,6 +12,16 @@ export const EVM_CHAINS = {
   mainnet: mainnet,
   testnet: sepolia,
 } as const;
+
+export const BASE_CHAINS = {
+  mainnet: base,
+  testnet: baseSepolia,
+} as const;
+
+/** Get the viem chain object for any EVM chain + network. */
+export function getEvmChain(network: Network, chain: EvmChain = 'ethereum') {
+  return chain === 'base' ? BASE_CHAINS[network] : EVM_CHAINS[network];
+}
 
 // Token addresses
 export const TOKENS = {
@@ -30,6 +41,22 @@ export const TOKENS = {
     USDC_DECIMALS: 6,
     WETH_DECIMALS: 18,
     WSOL_DECIMALS: 9,
+  },
+} as const;
+
+// Base token addresses
+export const BASE_TOKENS = {
+  mainnet: {
+    USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`,
+    WETH: '0x4200000000000000000000000000000000000006' as `0x${string}`,
+    USDC_DECIMALS: 6,
+    WETH_DECIMALS: 18,
+  },
+  testnet: {
+    USDC: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' as `0x${string}`, // Base Sepolia USDC
+    WETH: '0x4200000000000000000000000000000000000006' as `0x${string}`,
+    USDC_DECIMALS: 6,
+    WETH_DECIMALS: 18,
   },
 } as const;
 
@@ -54,14 +81,15 @@ export const DEBRIDGE_CONFIG = {
   api: 'https://dln.debridge.finance/v1.0',
   statusApi: 'https://stats-api.dln.trade/api',
   chains: {
-    mainnet: { evmChainId: '1', solanaChainId: '7565164' },
-    testnet: { evmChainId: '1', solanaChainId: '7565164' }, // deBridge is mainnet-only
+    mainnet: { evmChainId: '1', solanaChainId: '7565164', baseChainId: '8453' },
+    testnet: { evmChainId: '1', solanaChainId: '7565164', baseChainId: '8453' }, // deBridge is mainnet-only
   },
   tokens: {
     nativeETH: '0x0000000000000000000000000000000000000000',
     nativeSOL: '11111111111111111111111111111111',
     USDC_ETH: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     USDC_SOL: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    USDC_BASE: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
   },
 } as const;
 
@@ -124,13 +152,14 @@ export const UNISWAP_CONFIG = {
 export const LIFI_CONFIG = {
   api: 'https://li.quest/v1',
   evmChainId: 1,
+  baseChainId: 8453,
   solanaChainId: 1151111081099710,
 } as const;
 
 // Block explorers
 export const EXPLORERS = {
-  mainnet: { evm: 'https://etherscan.io', solana: 'https://solscan.io' },
-  testnet: { evm: 'https://sepolia.etherscan.io', solana: 'https://explorer.solana.com' },
+  mainnet: { evm: 'https://etherscan.io', base: 'https://basescan.org', solana: 'https://solscan.io' },
+  testnet: { evm: 'https://sepolia.etherscan.io', base: 'https://sepolia.basescan.org', solana: 'https://explorer.solana.com' },
 } as const;
 
 // Staking platforms
@@ -152,7 +181,18 @@ export const ETHERSCAN_CHAIN_ID = {
   testnet: '11155111',  // Sepolia
 } as const;
 
-export function getEvmRpcUrl(network: Network): string {
+export const BASESCAN_CHAIN_ID = {
+  mainnet: '8453',
+  testnet: '84532',  // Base Sepolia
+} as const;
+
+export function getEvmRpcUrl(network: Network, chain: EvmChain = 'ethereum'): string {
+  if (chain === 'base') {
+    if (process.env.BASE_RPC_URL) return process.env.BASE_RPC_URL;
+    return network === 'mainnet'
+      ? 'https://base-rpc.publicnode.com'
+      : 'https://base-sepolia-rpc.publicnode.com';
+  }
   if (process.env.EVM_RPC_URL) return process.env.EVM_RPC_URL;
   return network === 'mainnet'
     ? 'https://ethereum-rpc.publicnode.com'

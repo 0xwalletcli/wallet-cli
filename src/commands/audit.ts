@@ -1,7 +1,7 @@
 import { PublicKey } from '@solana/web3.js';
-import { parseAbi } from 'viem';
+import { createPublicClient, http, parseAbi, type Chain } from 'viem';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
-import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID } from '../config.js';
+import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmRpcUrl, getEvmChain } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getPublicClient } from '../lib/evm.js';
 import { getConnection } from '../lib/solana.js';
@@ -23,6 +23,7 @@ const REQUIRED_HOSTS = [
   'api.coingecko.com',
   'trade-api.gateway.uniswap.org',
   'li.quest',
+  'api.spritz.finance',
 ];
 
 // minimum pool sizes to consider healthy
@@ -261,6 +262,7 @@ export async function auditCommand(network: Network) {
   // ── Fire ALL network calls in parallel ──
 
   const evmStart = Date.now();
+  const baseStart = Date.now();
   const solStart = Date.now();
   const client = getPublicClient(network);
   const conn = getConnection(network);
@@ -270,14 +272,24 @@ export async function auditCommand(network: Network) {
 
   const uniswapApiKey = process.env.UNISWAP_API_KEY;
 
+  const spritzApiKey = process.env.SPRITZ_API_KEY;
+
   const [
-    evmBlock, solSlot, marketPrices,
+    evmBlock, baseBlock, solSlot, marketPrices,
     cowEth, cowWsol, jupSol, deBridgeSol,
     deBridgeStatus, etherscanCheck, stethRatio, lidoSupply, jitoPool,
-    uniswapCheck, lifiCheck,
+    uniswapCheck, lifiCheck, spritzCheck,
   ] = await Promise.allSettled([
     // Infrastructure
     withTimeout(client.getBlockNumber(), TIMEOUT).then(block => ({ block, ms: Date.now() - evmStart })),
+    (async () => {
+      const baseClient = createPublicClient({
+        chain: getEvmChain(network, 'base') as Chain,
+        transport: http(getEvmRpcUrl(network, 'base')),
+      });
+      const block = await withTimeout(baseClient.getBlockNumber(), TIMEOUT);
+      return { block, ms: Date.now() - baseStart };
+    })(),
     withTimeout(conn.getSlot(), TIMEOUT).then(slot => ({ slot, ms: Date.now() - solStart })),
     // Market prices
     getMarketPrices(),
@@ -346,6 +358,14 @@ export async function auditCommand(network: Network) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return { ms: Date.now() - start };
     })(),
+    // Spritz Finance API (off-ramp)
+    spritzApiKey ? (async () => {
+      const start = Date.now();
+      const { getSpritzClient } = await import('../lib/spritz.js');
+      const client = getSpritzClient();
+      const accounts = await withTimeout(client.bankAccount.list(), TIMEOUT);
+      return { ms: Date.now() - start, accounts: accounts.length };
+    })() : Promise.resolve(null),
   ]);
 
   // ── Extract market prices first (needed for spread calculations) ──
@@ -369,6 +389,14 @@ export async function auditCommand(network: Network) {
   } else {
     printCheck('EVM RPC', 'fail', evmBlock.reason?.message || 'failed');
     record('EVM RPC', 'fail', evmBlock.reason?.message || 'failed');
+  }
+
+  if (baseBlock.status === 'fulfilled') {
+    printCheck('Base RPC', 'ok', `Block #${baseBlock.value.block} (${baseBlock.value.ms}ms)`);
+    record('Base RPC', 'ok', `Block #${baseBlock.value.block} (${baseBlock.value.ms}ms)`);
+  } else {
+    printCheck('Base RPC', 'fail', baseBlock.reason?.message || 'failed');
+    record('Base RPC', 'fail', baseBlock.reason?.message || 'failed');
   }
 
   if (solSlot.status === 'fulfilled') {
@@ -541,6 +569,29 @@ export async function auditCommand(network: Network) {
   } else {
     printCheck('LI.FI API', 'fail', lifiCheck.reason?.message || 'failed');
     record('LI.FI API', 'fail', lifiCheck.reason?.message || 'failed');
+  }
+
+  // Spritz Finance (off-ramp)
+  console.log(`\n  ── Spritz Finance (Off-ramp) ${SEP}`);
+
+  if (!spritzApiKey) {
+    printCheck('Spritz API', 'warn', 'No SPRITZ_API_KEY set (withdraw unavailable)');
+    record('Spritz API', 'warn', 'No API key configured');
+  } else if (spritzCheck.status === 'fulfilled') {
+    if (spritzCheck.value == null) {
+      printCheck('Spritz API', 'warn', 'Skipped (no API key)');
+      record('Spritz API', 'warn', 'Skipped');
+    } else {
+      printCheck('Spritz API', 'ok', `${spritzCheck.value.accounts} bank account(s) linked (${spritzCheck.value.ms}ms)`);
+      record('Spritz API', 'ok', `${spritzCheck.value.accounts} bank account(s) (${spritzCheck.value.ms}ms)`);
+      if (spritzCheck.value.accounts === 0) {
+        printCheck('Bank accounts', 'warn', 'No bank accounts linked — add one at https://app.spritz.finance');
+        record('Spritz Bank Accounts', 'warn', 'No accounts linked');
+      }
+    }
+  } else {
+    printCheck('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
+    record('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
   }
 
   // Cross-platform comparison

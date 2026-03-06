@@ -11,19 +11,22 @@ export interface SignerConfig {
 }
 
 export interface WalletConfig {
-  swapProvider: string;   // 'auto' | 'cow' | 'uniswap' | 'lifi'
-  bridgeProvider: string; // 'auto' | 'debridge' | 'lifi'
+  swapProvider: string;    // 'auto' | 'cow' | 'uniswap' | 'lifi'
+  bridgeProvider: string;  // 'auto' | 'debridge' | 'lifi'
+  offrampProvider: string; // 'auto' | 'spritz'
   signer: string | SignerConfig; // legacy string or per-chain object
 }
 
 const DEFAULTS: WalletConfig = {
   swapProvider: 'auto',
   bridgeProvider: 'auto',
+  offrampProvider: 'auto',
   signer: 'env',
 };
 
 const VALID_SWAP_PROVIDERS = ['auto', 'cow', 'uniswap', 'lifi'];
 const VALID_BRIDGE_PROVIDERS = ['auto', 'debridge', 'lifi'];
+const VALID_OFFRAMP_PROVIDERS = ['auto', 'spritz'];
 const VALID_SIGNERS = ['env', 'wc', 'browser'];
 
 /** Normalize signer config — migrates legacy string to per-chain object */
@@ -53,8 +56,8 @@ export function getConfigPath(): string {
   return CONFIG_FILE;
 }
 
-export function validateConfigKey(key: string): key is 'swap' | 'bridge' | 'signer' {
-  return key === 'swap' || key === 'bridge' || key === 'signer';
+export function validateConfigKey(key: string): key is 'swap' | 'bridge' | 'offramp' | 'signer' {
+  return key === 'swap' || key === 'bridge' || key === 'offramp' || key === 'signer';
 }
 
 export function validateConfigValue(key: string, value: string): string | null {
@@ -65,6 +68,10 @@ export function validateConfigValue(key: string, value: string): string | null {
   } else if (key === 'bridge') {
     if (!VALID_BRIDGE_PROVIDERS.includes(value)) {
       return `Invalid bridge provider: "${value}". Valid: ${VALID_BRIDGE_PROVIDERS.join(', ')}`;
+    }
+  } else if (key === 'offramp') {
+    if (!VALID_OFFRAMP_PROVIDERS.includes(value)) {
+      return `Invalid offramp provider: "${value}". Valid: ${VALID_OFFRAMP_PROVIDERS.join(', ')}`;
     }
   } else if (key === 'signer') {
     if (!VALID_SIGNERS.includes(value)) {
@@ -83,4 +90,9 @@ export function resolveSwapProvider(flagValue?: string): string {
 export function resolveBridgeProvider(flagValue?: string): string {
   if (flagValue) return flagValue;
   return loadConfig().bridgeProvider;
+}
+
+export function resolveOfframpProvider(flagValue?: string): string {
+  if (flagValue) return flagValue;
+  return loadConfig().offrampProvider;
 }

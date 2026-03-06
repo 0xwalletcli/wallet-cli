@@ -1,4 +1,4 @@
-import { type Network, TOKENS, LIDO_CONFIG, JITO_CONFIG, SOLANA_MINTS } from '../config.js';
+import { type Network, TOKENS, BASE_TOKENS, LIDO_CONFIG, JITO_CONFIG, SOLANA_MINTS } from '../config.js';
 import { getPublicClient, getERC20Balance } from './evm.js';
 import { getSolBalance, getSplTokenBalance, getWsolBalance } from './solana.js';
 import { formatToken } from './format.js';
@@ -158,6 +158,29 @@ export function evmTokens(network: Network, address: `0x${string}`, which: strin
         result.push({ symbol: 'WSOL-ETH', decimals: 6, fetch: async () => {
           const bal = await getERC20Balance(network, tokens.WSOL, address);
           return Number(bal) / 10 ** tokens.WSOL_DECIMALS;
+        }});
+        break;
+    }
+  }
+  return result;
+}
+
+/** Build TrackedToken list for Base chain tokens. */
+export function baseTokens(network: Network, address: `0x${string}`, which: string[]): TrackedToken[] {
+  const tokens = BASE_TOKENS[network];
+  const result: TrackedToken[] = [];
+  for (const sym of which) {
+    switch (sym) {
+      case 'ETH-BASE':
+        result.push({ symbol: 'ETH-BASE', decimals: 6, fetch: async () => {
+          const bal = await getPublicClient(network, 'base').getBalance({ address });
+          return Number(bal) / 1e18;
+        }});
+        break;
+      case 'USDC-BASE':
+        result.push({ symbol: 'USDC-BASE', decimals: 2, fetch: async () => {
+          const bal = await getERC20Balance(network, tokens.USDC, address, 'base');
+          return Number(bal) / 10 ** tokens.USDC_DECIMALS;
         }});
         break;
     }

@@ -1,7 +1,7 @@
 import { parseEther, parseAbi } from 'viem';
 import { PublicKey, Transaction, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { getAssociatedTokenAddressSync, createAssociatedTokenAccountInstruction, getAccount, NATIVE_MINT } from '@solana/spl-token';
-import { type Network, TOKENS, WSOL_CONFIG, EXPLORERS } from '../config.js';
+import { type Network, TOKENS, BASE_TOKENS, WSOL_CONFIG, EXPLORERS } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getWalletClient, getERC20Balance, waitForReceipt } from '../lib/evm.js';
 import { getConnection, getSolBalance, getWsolBalance, sendSol } from '../lib/solana.js';
@@ -9,7 +9,7 @@ import { resolveAddress } from '../lib/addressbook.js';
 import { parseTokenAmount, formatToken } from '../lib/format.js';
 import { confirm, validateAmount, warnMainnet, warnDryRun } from '../lib/prompt.js';
 import { trackTx, clearTx } from '../lib/txtracker.js';
-import { BalanceTracker, evmTokens, solTokens } from '../lib/balancedelta.js';
+import { BalanceTracker, evmTokens, baseTokens, solTokens } from '../lib/balancedelta.js';
 
 export async function sendCommand(
   amount: string,
@@ -21,13 +21,13 @@ export async function sendCommand(
   validateAmount(amount);
   const t = token.toUpperCase();
 
-  if (!['ETH', 'USDC', 'SOL', 'WSOL', 'WSOL-ETH'].includes(t)) {
-    console.error('  Supported tokens: eth, usdc, sol, wsol, wsol-eth');
+  if (!['ETH', 'USDC', 'SOL', 'WSOL', 'WSOL-ETH', 'ETH-BASE', 'USDC-BASE'].includes(t)) {
+    console.error('  Supported tokens: eth, usdc, sol, wsol, wsol-eth, eth-base, usdc-base');
     process.exit(1);
   }
 
   if (dryRun) warnDryRun();
-  const chain = ['SOL', 'WSOL'].includes(t) ? 'Solana' : 'Ethereum';
+  const chain = ['SOL', 'WSOL'].includes(t) ? 'Solana' : t.endsWith('-BASE') ? 'Base' : 'Ethereum';
   console.log(`  Send: ${amount} ${t}`);
   console.log(`  Chain: ${chain} ${network}`);
   warnMainnet(network, dryRun);
@@ -36,6 +36,10 @@ export async function sendCommand(
     await sendSolCommand(amount, recipient, network, dryRun);
   } else if (t === 'WSOL') {
     await sendWsolCommand(amount, recipient, network, dryRun);
+  } else if (t === 'ETH-BASE') {
+    await sendBaseCommand(amount, 'ETH-BASE', recipient, network, dryRun);
+  } else if (t === 'USDC-BASE') {
+    await sendBaseCommand(amount, 'USDC-BASE', recipient, network, dryRun);
   } else if (t === 'WSOL-ETH') {
     await sendEvmCommand(amount, 'WSOL-ETH', recipient, network, dryRun);
   } else {
@@ -213,6 +217,128 @@ async function sendEvmCommand(amount: string, token: string, recipient: string, 
       console.log(`  URL: ${explorer.evm}/tx/${hash}`);
       console.log('  Waiting for confirmation...');
       await waitForReceipt(network, hash);
+      clearTx();
+    } catch (err: any) {
+      clearTx();
+      console.error(`  Send failed: ${err.message}`);
+    }
+    await tracker.snapshotAndPrint('Send');
+    console.log('');
+  }
+}
+
+async function sendBaseCommand(amount: string, token: string, recipient: string, network: Network, dryRun: boolean) {
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
+  const to = resolveAddress(recipient, 'evm') as `0x${string}`;
+  const explorer = EXPLORERS[network];
+  const tokens = BASE_TOKENS[network];
+
+  console.log(`  From: ${account.address}`);
+  console.log(`  To:   ${to}`);
+  console.log('  Checking balance...');
+
+  if (token === 'ETH-BASE') {
+    const value = parseEther(amount);
+    const client = getPublicClient(network, 'base');
+    const balance = await client.getBalance({ address: account.address });
+
+    let insufficientBalance = false;
+    if (balance < value) {
+      console.log(`  Insufficient ETH-BASE (have: ${formatToken(Number(balance) / 1e18, 6)}, need: ${amount})`);
+      insufficientBalance = true;
+    }
+
+    console.log(`\n  You send:  ${amount} ETH-BASE`);
+    console.log(`  To:        ${to}`);
+    console.log(`  Chain:     Base ${network}\n`);
+
+    const tracker = new BalanceTracker(baseTokens(network, account.address, ['ETH-BASE']));
+
+    if (dryRun) {
+      console.log('  [DRY RUN] Skipping execution.\n');
+      return;
+    }
+
+    await tracker.snapshot();
+    tracker.printBefore();
+
+    if (!await confirm(`Proceed?`)) {
+      console.log('  Cancelled.\n');
+      return;
+    }
+
+    if (insufficientBalance) {
+      console.log('  Insufficient balance — cannot execute.\n');
+      return;
+    }
+
+    console.log('  Sending transaction...');
+    const wallet = await getWalletClient(network, 'base');
+    try {
+      const hash = await wallet.sendTransaction({ account, to, value });
+      trackTx(hash, 'evm', network);
+      console.log(`  TX:  ${hash}`);
+      console.log(`  URL: ${explorer.base}/tx/${hash}`);
+      console.log('  Waiting for confirmation...');
+      await waitForReceipt(network, hash, 'base');
+      clearTx();
+    } catch (err: any) {
+      clearTx();
+      console.error(`  Send failed: ${err.message}`);
+    }
+    await tracker.snapshotAndPrint('Send');
+    console.log('');
+
+  } else if (token === 'USDC-BASE') {
+    const parsedAmount = parseTokenAmount(amount, tokens.USDC_DECIMALS);
+    const balance = await getERC20Balance(network, tokens.USDC, account.address, 'base');
+
+    let insufficientBalance = false;
+    if (balance < parsedAmount) {
+      console.log(`  Insufficient USDC-BASE (have: ${formatToken(Number(balance) / 10 ** tokens.USDC_DECIMALS, 2)}, need: ${amount})`);
+      insufficientBalance = true;
+    }
+
+    console.log(`\n  You send:  ${amount} USDC-BASE`);
+    console.log(`  To:        ${to}`);
+    console.log(`  Chain:     Base ${network}\n`);
+
+    const tracker = new BalanceTracker(baseTokens(network, account.address, ['USDC-BASE', 'ETH-BASE']));
+
+    if (dryRun) {
+      console.log('  [DRY RUN] Skipping execution.\n');
+      return;
+    }
+
+    await tracker.snapshot();
+    tracker.printBefore();
+
+    if (!await confirm(`Proceed?`)) {
+      console.log('  Cancelled.\n');
+      return;
+    }
+
+    if (insufficientBalance) {
+      console.log('  Insufficient balance — cannot execute.\n');
+      return;
+    }
+
+    console.log('  Sending transaction...');
+    const wallet = await getWalletClient(network, 'base');
+    try {
+      const hash = await wallet.writeContract({
+        account,
+        address: tokens.USDC,
+        abi: parseAbi(['function transfer(address to, uint256 amount) returns (bool)']),
+        functionName: 'transfer',
+        args: [to, parsedAmount],
+      });
+      trackTx(hash, 'evm', network);
+      console.log(`  TX:  ${hash}`);
+      console.log(`  URL: ${explorer.base}/tx/${hash}`);
+      console.log('  Waiting for confirmation...');
+      await waitForReceipt(network, hash, 'base');
       clearTx();
     } catch (err: any) {
       clearTx();

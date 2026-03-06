@@ -1,37 +1,47 @@
 import { createPublicClient, http, parseAbi, type PublicClient, type WalletClient, type Chain, type HttpTransport, type LocalAccount } from 'viem';
-import { type Network, EVM_CHAINS, TOKENS, getEvmRpcUrl } from '../config.js';
+import { type Network, type EvmChain, TOKENS, getEvmChain, getEvmRpcUrl } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 
 type TypedWalletClient = WalletClient<HttpTransport, Chain, LocalAccount>;
 
-let _publicClient: PublicClient | null = null;
-let _walletClient: TypedWalletClient | null = null;
-let _currentNetwork: Network | null = null;
+const _publicClients = new Map<string, PublicClient>();
+const _walletClients = new Map<string, TypedWalletClient>();
 
-export function getPublicClient(network: Network): PublicClient {
-  if (_publicClient && _currentNetwork === network) return _publicClient;
-  _currentNetwork = network;
-  _publicClient = createPublicClient({
-    chain: EVM_CHAINS[network],
-    transport: http(getEvmRpcUrl(network)),
-  });
-  return _publicClient;
+function cacheKey(network: Network, chain: EvmChain = 'ethereum'): string {
+  return `${chain}:${network}`;
 }
 
-export async function getWalletClient(network: Network): Promise<TypedWalletClient> {
-  if (_walletClient && _currentNetwork === network) return _walletClient;
+export function getPublicClient(network: Network, chain: EvmChain = 'ethereum'): PublicClient {
+  const key = cacheKey(network, chain);
+  const cached = _publicClients.get(key);
+  if (cached) return cached;
+  const client = createPublicClient({
+    chain: getEvmChain(network, chain) as Chain,
+    transport: http(getEvmRpcUrl(network, chain)),
+  });
+  _publicClients.set(key, client as PublicClient);
+  return client;
+}
+
+export async function getWalletClient(network: Network, chain: EvmChain = 'ethereum'): Promise<TypedWalletClient> {
+  const key = cacheKey(network, chain);
+  const cached = _walletClients.get(key);
+  if (cached) return cached;
   const signer = await resolveSigner();
-  _walletClient = await signer.getEvmWalletClient(
-    EVM_CHAINS[network],
-    http(getEvmRpcUrl(network)),
+  const client = await signer.getEvmWalletClient(
+    getEvmChain(network, chain),
+    http(getEvmRpcUrl(network, chain)),
   );
-  _currentNetwork = network;
-  return _walletClient;
+  _walletClients.set(key, client);
+  return client;
 }
 
 /** Force the wallet client to be recreated on next use (fresh nonce from RPC). */
-export function resetWalletClient() {
-  _walletClient = null;
+export function resetWalletClient(chain: EvmChain = 'ethereum') {
+  // Clear all wallet clients for the given chain, or all if not specified
+  for (const key of _walletClients.keys()) {
+    if (key.startsWith(`${chain}:`)) _walletClients.delete(key);
+  }
 }
 
 /**
@@ -41,8 +51,9 @@ export function resetWalletClient() {
 export async function simulateTx(
   network: Network,
   params: { account: `0x${string}`; to: `0x${string}`; data: `0x${string}`; value?: bigint },
+  chain: EvmChain = 'ethereum',
 ) {
-  const client = getPublicClient(network);
+  const client = getPublicClient(network, chain);
   console.log('  Simulating transaction...');
   try {
     await client.call({
@@ -65,8 +76,8 @@ const ERC20_ABI = parseAbi([
   'function symbol() view returns (string)',
 ]);
 
-export async function getERC20Balance(network: Network, token: `0x${string}`, address: `0x${string}`): Promise<bigint> {
-  const client = getPublicClient(network);
+export async function getERC20Balance(network: Network, token: `0x${string}`, address: `0x${string}`, chain: EvmChain = 'ethereum'): Promise<bigint> {
+  const client = getPublicClient(network, chain);
   return client.readContract({
     address: token,
     abi: ERC20_ABI,
@@ -75,8 +86,8 @@ export async function getERC20Balance(network: Network, token: `0x${string}`, ad
   });
 }
 
-export async function getERC20Allowance(network: Network, token: `0x${string}`, owner: `0x${string}`, spender: `0x${string}`): Promise<bigint> {
-  const client = getPublicClient(network);
+export async function getERC20Allowance(network: Network, token: `0x${string}`, owner: `0x${string}`, spender: `0x${string}`, chain: EvmChain = 'ethereum'): Promise<bigint> {
+  const client = getPublicClient(network, chain);
   return client.readContract({
     address: token,
     abi: ERC20_ABI,
@@ -85,9 +96,9 @@ export async function getERC20Allowance(network: Network, token: `0x${string}`, 
   });
 }
 
-export async function approveERC20(network: Network, token: `0x${string}`, spender: `0x${string}`, amount: bigint): Promise<`0x${string}`> {
+export async function approveERC20(network: Network, token: `0x${string}`, spender: `0x${string}`, amount: bigint, chain: EvmChain = 'ethereum'): Promise<`0x${string}`> {
   const signer = await resolveSigner();
-  const wallet = await getWalletClient(network);
+  const wallet = await getWalletClient(network, chain);
   const account = await signer.getEvmAccount();
   const hash = await wallet.writeContract({
     account,
@@ -102,7 +113,7 @@ export async function approveERC20(network: Network, token: `0x${string}`, spend
   const { trackTx, clearTx } = await import('./txtracker.js');
   trackTx(hash, 'evm', network);
 
-  await waitForReceipt(network, hash);
+  await waitForReceipt(network, hash, chain);
   clearTx();
   console.log('  Approval confirmed.');
   return hash;
@@ -130,6 +141,7 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   '0x11157667': 'InvalidSwap — swap route failed',
   '0xc9f52c71': 'TooLittleReceived — output amount below minimum',
   '0x24df576f': 'TooMuchRequested — input amount exceeded maximum',
+  '0x2c4029e9': 'ExecutionFailed — Uniswap Universal Router command failed (likely expired quote or slippage)',
 };
 
 /** Walk a viem error chain to find the raw revert data (hex bytes). */
@@ -165,6 +177,21 @@ function decodeRevertReason(err: any): string {
       } catch { /* fall through */ }
     }
 
+    // ExecutionFailed(uint256 commandIndex, bytes message) — try to decode inner error
+    if (selector === '0x2c4029e9' && data.length > 10 + 64) {
+      try {
+        const hex = data.slice(10); // skip selector
+        const innerOffset = parseInt(hex.slice(64, 128), 16) * 2; // bytes offset
+        const innerLen = parseInt(hex.slice(innerOffset, innerOffset + 64), 16);
+        if (innerLen >= 4) {
+          const innerData = '0x' + hex.slice(innerOffset + 64, innerOffset + 64 + innerLen * 2);
+          const innerSelector = innerData.slice(0, 10).toLowerCase();
+          const innerKnown = KNOWN_ERROR_SELECTORS[innerSelector];
+          if (innerKnown) return `ExecutionFailed — ${innerKnown}`;
+        }
+      } catch { /* fall through */ }
+    }
+
     // Known custom error selectors
     const known = KNOWN_ERROR_SELECTORS[selector];
     if (known) return known;
@@ -189,8 +216,8 @@ function decodeRevertReason(err: any): string {
  * On revert, attempts to extract the revert reason via simulation.
  * Returns the receipt on success.
  */
-export async function waitForReceipt(network: Network, hash: `0x${string}`) {
-  const client = getPublicClient(network);
+export async function waitForReceipt(network: Network, hash: `0x${string}`, chain: EvmChain = 'ethereum') {
+  const client = getPublicClient(network, chain);
   const receipt = await client.waitForTransactionReceipt({ hash });
   if (receipt.status === 'reverted') {
     // Try to extract the revert reason by simulating the tx at the block it was mined

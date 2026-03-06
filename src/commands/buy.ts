@@ -330,7 +330,8 @@ async function buyEvm(amount: string, network: Network, dryRun: boolean, provide
       console.log('  Cancelled.\n');
       return;
     }
-    await approveERC20(network, sellToken, spender, requiredAllowance);
+    const MAX_UINT256 = 2n ** 256n - 1n;
+    await approveERC20(network, sellToken, spender, MAX_UINT256);
   }
 
   // Sign and submit via provider
@@ -507,7 +508,8 @@ async function buyWsolEth(amount: string, network: Network, dryRun: boolean, pro
       console.log('  Cancelled.\n');
       return;
     }
-    await approveERC20(network, sellToken, spender, requiredAllowance);
+    const MAX_UINT256 = 2n ** 256n - 1n;
+    await approveERC20(network, sellToken, spender, MAX_UINT256);
   }
 
   // Sign and submit via provider
@@ -555,9 +557,16 @@ export async function buyCommand(amount: string, token: string, network: Network
     // WSOL = wrap SOL 1:1, no swap needed
     const { wrapCommand } = await import('./wrap.js');
     await wrapCommand(amount, 'sol', network, dryRun);
+  } else if (t === 'ETH-BASE' || t === 'USDC-BASE') {
+    // Buy Base tokens: bridge USDC from Ethereum to Base
+    console.error(`  To get ${t}, bridge from Ethereum or Solana:`);
+    console.error(`    wallet bridge <amount> usdc ${t.toLowerCase()}`);
+    console.error(`  Or swap on Base if you already have tokens there:`);
+    console.error(`    wallet swap <amount> ${t === 'ETH-BASE' ? 'usdc-base eth-base' : 'eth-base usdc-base'}`);
+    process.exit(1);
   } else {
     console.error('  Supported: buy <amount> sol, buy <amount> eth, buy <amount> wsol-eth, buy <amount> wsol');
-    console.error('  All spend USDC to buy the specified token (wsol wraps SOL 1:1).');
+    console.error('  For Base tokens, use bridge: wallet bridge <amount> usdc usdc-base');
     process.exit(1);
   }
 }

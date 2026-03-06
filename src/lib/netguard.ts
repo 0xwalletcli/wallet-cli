@@ -20,6 +20,10 @@ const ALLOWED_HOSTS = new Set([
   'ethereum-sepolia-rpc.publicnode.com',
   'eth.llamarpc.com',
   'rpc.sepolia.org',
+  // Base RPCs (publicnode)
+  'base-rpc.publicnode.com',
+  'base-sepolia-rpc.publicnode.com',
+  'mainnet.base.org',
   // Solana RPCs
   'solana-rpc.publicnode.com',
   'api.mainnet-beta.solana.com',
@@ -34,6 +38,9 @@ const ALLOWED_HOSTS = new Set([
   'lite-api.jup.ag',
   // Etherscan (transaction history — V2 API, single endpoint for all chains)
   'api.etherscan.io',
+  'api.basescan.org',
+  'basescan.org',
+  'sepolia.basescan.org',
   // Uniswap Trading API
   'trade-api.gateway.uniswap.org',
   // LI.FI / Jumper
@@ -46,6 +53,9 @@ const ALLOWED_HOSTS = new Set([
   'eth-api.lido.fi',
   // Jito (staking APY)
   'kobe.mainnet.jito.network',
+  // Spritz Finance (off-ramp)
+  'api.spritz.finance',
+  'platform.spritz.finance',
   // WalletConnect relay
   'relay.walletconnect.com',
   // localhost (for dev/testing)
@@ -55,7 +65,7 @@ const ALLOWED_HOSTS = new Set([
 ]);
 
 // Add custom RPC hosts from environment (parsed at import time, after dotenv)
-for (const envVar of ['EVM_RPC_URL', 'SOLANA_RPC_URL']) {
+for (const envVar of ['EVM_RPC_URL', 'BASE_RPC_URL', 'SOLANA_RPC_URL']) {
   const url = process.env[envVar];
   if (url) {
     try { ALLOWED_HOSTS.add(new URL(url).hostname); } catch { /* config.ts will handle */ }

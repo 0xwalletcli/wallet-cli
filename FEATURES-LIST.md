@@ -21,12 +21,14 @@ Goal: Make wallet-cli the one-stop-shop for all personal finance needs.
 - **Feature 11: Value Command** — `wallet value <amount> <token> [target]` shows USD value of any managed asset + cross-token conversion (e.g., `value 10000 usdc eth`). Staked assets resolve through base token: stETH -> ETH -> USD (rate from Lido contract `getPooledEthByShares`), JitoSOL -> SOL -> USD (rate from Jito stake pool). Supports: eth, weth, sol, wsol, wsol-eth, usdc, steth, jitosol.
 - **Feature 12: Price Fallback** — shared `src/lib/prices.ts` with CoinGecko primary + DeFi Llama fallback. All price-dependent commands (balance, value, quote, zap, health) use `fetchPrices()`. Never blocked by CoinGecko 429 rate limits. `coins.llama.fi` added to netguard allowlist.
 - **Feature 13: History Polish** — all history commands: compact single-line table format, parallel fetch (EVM + Solana via `Promise.allSettled`), clickable shortened IDs/tx hashes (OSC 8 terminal hyperlinks via `link()`/`txLink()` in format.ts), amounts displayed for all operations (Solana: parsed from pre/post balances; ETH unstake: decoded from calldata + internal txs), aligned fixed-width columns, configurable limit (`HISTORY_LIMIT` in config.ts). Bridge status normalization via STATUS_MAP (raw API states -> short display names). Solana txs resolve known token mints (USDC, JitoSOL, WSOL) instead of showing generic "SPL".
+- **Feature 17: Off-Ramp (Multi-Provider)** — `wallet withdraw <amount>` sends USDC to fiat via configurable off-ramp providers. `OfframpProvider` interface in `src/providers/types.ts`, registry in `src/providers/registry.ts`, auto-registration via side-effect imports. Pin provider: `wallet config set offramp spritz` or auto-detect first configured provider. Subcommands: `withdraw accounts`, `withdraw history`. Current providers: Spritz Finance (WIP — account issues). Next provider: Peer/ZKP2P (decentralized, non-custodial). Mainnet only.
+- **Feature 18: Base Chain Support** — Full Base L2 support across all commands. Tokens: `ETH-BASE` (native ETH on Base), `USDC-BASE` (USDC on Base). Commands updated: balance (Base section), send (ETH-BASE/USDC-BASE), swap (same-chain Base swaps via LI.FI), bridge (Ethereum↔Base, Base↔Solana via deBridge/LI.FI), transactions (Base tx history via Etherscan V2), health (Base RPC checks), tokens (Base token listing), value (eth-base/usdc-base pricing), audit (Base RPC audit), buy (redirection to bridge/swap). Config: `EvmChain` type (`'ethereum' | 'base'`), per-chain EVM client caching, `BASE_CHAINS` (mainnet 8453, testnet 84532 Base Sepolia), `BASE_TOKENS`, `BASESCAN_CHAIN_ID`, Base in `EXPLORERS`. WalletConnect includes `eip155:8453`/`eip155:84532`. Base RPC: `base-rpc.publicnode.com` (mainnet), `base-sepolia-rpc.publicnode.com` (testnet). Override with `BASE_RPC_URL` env var.
 
 ---
 
-## Feature 15: Fiat On-Ramp & Off-Ramp (with 2FA)
+## Feature 15: Fiat On-Ramp (with 2FA)
 
-**Status:** TODO
+**Status:** TODO (off-ramp handled by Feature 17 via multi-provider architecture)
 **Priority:** Medium (very nice to have)
 **Complexity:** High
 
@@ -124,6 +126,82 @@ MoonPay launched `moonpay-cli` (Feb 24, 2026) — a non-custodial CLI tool with 
 ### Netguard
 
 Add `api.developer.coinbase.com`, `global.transak.com`, `api.moonpay.com` to `ALLOWED_HOSTS`.
+
+---
+
+## Feature 17: Off-Ramp (Multi-Provider Architecture)
+
+**Status:** WIP — Architecture done, finding viable providers.
+**Priority:** High (core personal utility)
+**Complexity:** Medium
+
+### Goal
+
+```
+wallet withdraw 500                    # off-ramp USDC to bank via configured provider
+wallet withdraw accounts               # list linked accounts
+wallet withdraw history                # past withdrawals
+wallet config set offramp spritz       # pin a specific provider
+```
+
+### Architecture (DONE)
+
+Multi-provider off-ramp using `OfframpProvider` interface (same pattern as swap/bridge):
+- `src/providers/types.ts` — `OfframpProvider`, `OfframpQuote`, `OfframpBankAccount`, `OfframpOrderSummary`
+- `src/providers/registry.ts` — `registerOfframpProvider()`, `getOfframpProvider()`, `listConfiguredOfframpProviders()`
+- `src/providers/offramp/spritz.ts` — Spritz Finance provider (first implementation)
+- `src/lib/config.ts` — `offrampProvider` config field, `resolveOfframpProvider()`
+- `src/commands/withdraw.ts` — provider-agnostic withdraw command
+
+### Provider Status
+
+| Provider | Status | Type | Fees | KYB? | 1099-DA? |
+|----------|--------|------|------|------|----------|
+| **Spritz Finance** | Implemented but account disabled | Custodial | ~1% | No (individual) | Yes >$10K |
+| **Peer/ZKP2P** | NEXT — research complete | Decentralized, non-custodial | 0% (0.5% bridge) | No | No |
+| **Transak** | Researched | Custodial (widget) | ~1% | Yes (KYB) | Yes >$10K |
+| **MoonPay** | Researched | Custodial (widget) | 1-4.5% | Yes (KYB) | Yes >$10K |
+| **Bridge.xyz** | Researched | Custodial (pure API) | Custom | Yes (KYB) | Yes >$10K |
+
+### Next Provider: Peer/ZKP2P (peer.xyz)
+
+Decentralized P2P off-ramp using zero-knowledge proofs. Non-custodial, no KYC/KYB, no broker reporting.
+
+**How it works:**
+1. Deposit USDC into ZKP2P vault contract (on Base)
+2. Set exchange rate + payment method (Venmo, Zelle, CashApp, PayPal, Revolut, Wise)
+3. Buyer sends fiat via chosen payment app
+4. Buyer proves payment with ZK proof (zkTLS)
+5. Smart contract releases USDC to buyer
+
+**Integration approach:**
+- SDK: `@zkp2p/sdk` (browser extension based, onramp SDK exists)
+- Contracts: `github.com/zkp2p/zkp2p-contracts` (V2 escrow on Base)
+- Would need to bridge USDC from Ethereum → Base first
+- LP model (deposit + wait for buyers), not instant off-ramp
+- Docs: https://docs.peer.xyz
+
+**Challenges:**
+- On Base (not Ethereum mainnet) — requires bridge step
+- LP model, not instant — user deposits and waits for buyers
+- Fiat arrives via Venmo/Zelle, not direct ACH
+- No headless off-ramp API yet (SDK covers onramp only)
+
+### Tax Context
+
+- Any custodial provider is a "broker" under IRS 1099-DA rules (starting 2025)
+- **De minimis exemption:** Brokers can skip reporting if qualifying stablecoin sales < $10K/year per broker
+- USDC → USD is $0 gain regardless — 1099-DA is paperwork, not tax liability
+- Only truly decentralized protocols (ZKP2P) avoid broker classification
+
+### Bill Pay (Future)
+
+Spritz also supports bill pay (credit cards, mortgages, utilities via Plaid). This is blocked until the Spritz account issue is resolved or an alternative bill pay provider is found.
+
+### Netguard
+
+Current: `api.spritz.finance`, `platform.spritz.finance`
+Future: ZKP2P contract calls go through existing Base/Ethereum RPC (no new hosts needed)
 
 ---
 
@@ -372,4 +450,5 @@ interface Signer {
 |---|---------|--------|----------|
 | 14 | Encrypted keystore + signer abstraction | Signer + WC done, keystore TODO | High |
 | 15 | Fiat on-ramp/off-ramp + 2FA | TODO | Medium |
+| 17 | Off-ramp + bill pay (Spritz) | Off-ramp DONE, bill pay TODO | Medium-High |
 | 16 | Brokerage integrations | TODO | Low |
