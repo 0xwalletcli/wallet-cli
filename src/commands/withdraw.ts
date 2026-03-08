@@ -32,7 +32,7 @@ export async function withdrawCommand(
   amountStr: string,
   network: Network,
   dryRun: boolean,
-  providerFlag?: string,
+  platformFilter?: string,
 ) {
   validateAmount(amountStr);
   const amount = Number(amountStr);
@@ -42,12 +42,12 @@ export async function withdrawCommand(
     process.exit(1);
   }
 
-  const provider = resolveProvider(providerFlag);
+  const provider = resolveProvider();
 
   // Peer: off-ramp via P2P escrow on Base
   if (provider.id === 'peer') {
     const { depositCreateCommand } = await import('./deposit.js');
-    await depositCreateCommand(amountStr, dryRun);
+    await depositCreateCommand(amountStr, dryRun, platformFilter);
     return;
   }
 
@@ -251,8 +251,8 @@ export async function withdrawLiquidityCommand(amountStr: string) {
   }
 }
 
-export async function withdrawAccountsCommand(providerFlag?: string) {
-  const provider = resolveProvider(providerFlag);
+export async function withdrawAccountsCommand() {
+  const provider = getOfframpProvider('spritz');
   console.log(`  Fetching linked accounts from ${provider.displayName}...\n`);
 
   const accounts = await provider.listAccounts();

@@ -135,9 +135,160 @@ export async function depositLiquidityCommand(amountStr: string) {
   console.log('');
 }
 
-// ── Create deposit ──────────────────────────────────────
+// ── On-ramp: buy USDC with fiat ─────────────────────────
 
-export async function depositCreateCommand(amountStr: string, dryRun: boolean) {
+export async function depositBuyCommand(amountStr: string, dryRun: boolean, platformFilter?: string) {
+  validateAmount(amountStr);
+  const { getPeerClient, BASE_USDC, SUPPORTED_PLATFORMS, getPlatformLabel, rateToSpread } = await import('../lib/peer.js');
+  const { createInterface } = await import('readline');
+
+  const signer = await resolveSigner();
+  const account = await signer.getEvmAccount();
+
+  if (dryRun) warnDryRun();
+  console.log(`  On-ramp: buy ${amountStr} USDC with fiat via Peer`);
+  console.log(`  Chain: Base mainnet`);
+  console.log(`  To: ${account.address}\n`);
+
+  // Determine which platforms to query
+  let platforms: string[];
+  if (platformFilter) {
+    const p = platformFilter.toLowerCase();
+    if (!SUPPORTED_PLATFORMS.includes(p as any)) {
+      console.error(`  Unknown platform: "${p}". Valid: ${SUPPORTED_PLATFORMS.join(', ')}`);
+      return;
+    }
+    platforms = [p];
+  } else {
+    platforms = [...SUPPORTED_PLATFORMS];
+  }
+
+  console.log(`  Checking available USDC on ${platforms.map(getPlatformLabel).join(', ')}...`);
+
+  // Fetch quotes — "I want X USDC, how much fiat do I pay?"
+  const client = await getPeerClient();
+  let quote: any;
+  try {
+    quote = await client.getQuote({
+      paymentPlatforms: platforms,
+      fiatCurrency: 'USD',
+      user: account.address,
+      recipient: account.address,
+      destinationChainId: 8453,
+      destinationToken: BASE_USDC,
+      amount: amountStr,
+      isExactFiat: false,
+      includeNearbyQuotes: true,
+      nearbySearchRange: 10,
+      quotesToReturn: 10,
+    });
+  } catch (err: any) {
+    console.error(`  Failed to fetch quotes: ${err.message}\n`);
+    return;
+  }
+
+  const quotes = quote?.responseObject?.quotes || [];
+  if (quotes.length === 0) {
+    console.log('\n  No sellers found for this amount.\n');
+    console.log('  Peer liquidity is P2P — availability changes in real-time.');
+    console.log('  Try: wallet deposit liquidity <amount>  to check availability\n');
+    return;
+  }
+
+  // Show available quotes
+  console.log(`\n  Found ${quotes.length} seller${quotes.length > 1 ? 's' : ''}:\n`);
+  console.log('  ┌────┬─────────────────────┬──────────────────┬──────────────────┬──────────┐');
+  console.log('  │ #  │ Platform            │ You receive      │ You pay (fiat)   │ Markup   │');
+  console.log('  ├────┼─────────────────────┼──────────────────┼──────────────────┼──────────┤');
+
+  for (let i = 0; i < quotes.length; i++) {
+    const q = quotes[i];
+    const num = String(i + 1).padStart(2);
+    const platform = (getPlatformLabel(q.paymentMethod || q.paymentPlatform || '?')).padEnd(19);
+    const tokenAmt = q.tokenAmountFormatted || formatToken(Number(q.tokenAmount || 0) / 1e6, 2);
+    const receive = `${tokenAmt} USDC`.padStart(16);
+    const fiatAmt = q.fiatAmountFormatted || formatUSD(Number(q.fiatAmount || 0) / 100, 2);
+    const pay = `$${fiatAmt}`.padStart(16);
+    const spread = q.conversionRate ? `${formatToken(rateToSpread(q.conversionRate), 2)}%` : '?';
+    const markup = spread.padStart(8);
+    console.log(`  │ ${num} │ ${platform} │ ${receive} │ ${pay} │ ${markup} │`);
+  }
+
+  console.log('  └────┴─────────────────────┴──────────────────┴──────────────────┴──────────┘');
+
+  if (dryRun) {
+    console.log('\n  [DRY RUN] Skipping execution. Add --run to signal intent and buy.\n');
+    return;
+  }
+
+  // Select a quote
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const choice = await new Promise<string>((resolve) => {
+    rl.question(`\n  Select seller [1-${quotes.length}]: `, resolve);
+  });
+  rl.close();
+
+  const idx = parseInt(choice.trim(), 10) - 1;
+  if (isNaN(idx) || idx < 0 || idx >= quotes.length) {
+    console.log('  Invalid selection. Cancelled.\n');
+    return;
+  }
+
+  const selected = quotes[idx];
+  const intent = selected.intent;
+
+  // Show summary
+  const tokenAmt = selected.tokenAmountFormatted || formatToken(Number(selected.tokenAmount || 0) / 1e6, 2);
+  const fiatAmt = selected.fiatAmountFormatted || String(Number(selected.fiatAmount || 0) / 100);
+  const platformLabel = getPlatformLabel(selected.paymentMethod || '');
+
+  console.log('\n  ── On-ramp Summary ──');
+  console.log(`  You receive: ${tokenAmt} USDC on Base`);
+  console.log(`  You pay:     ~$${fiatAmt} via ${platformLabel}`);
+  if (selected.payeeData) {
+    const payeeKeys = Object.keys(selected.payeeData);
+    if (payeeKeys.length > 0) {
+      console.log(`  Pay to:      ${Object.values(selected.payeeData).join(', ')}`);
+    }
+  }
+  console.log(`  Chain:       Base mainnet\n`);
+
+  if (!await confirm('Signal intent and lock this trade?')) {
+    console.log('  Cancelled.\n');
+    return;
+  }
+
+  try {
+    console.log('  Signaling intent...');
+    const hash = await client.signalIntent({
+      depositId: BigInt(intent.depositId),
+      amount: BigInt(intent.amount),
+      toAddress: intent.toAddress as `0x${string}`,
+      processorName: intent.processorName,
+      payeeDetails: intent.payeeDetails as `0x${string}`,
+      fiatCurrencyCode: intent.fiatCurrencyCode,
+      conversionRate: BigInt(selected.conversionRate),
+    });
+    console.log(`  Intent signaled! Trade locked.`);
+    console.log(`  TX: ${hash}`);
+    console.log(`  URL: https://basescan.org/tx/${hash}`);
+    console.log(`\n  Next steps:`);
+    console.log(`    1. Pay $${fiatAmt} via ${platformLabel} to the seller`);
+    if (selected.payeeData) {
+      for (const [key, val] of Object.entries(selected.payeeData)) {
+        console.log(`       ${key}: ${val}`);
+      }
+    }
+    console.log(`    2. Proof is generated automatically via zkTLS`);
+    console.log(`    3. USDC is released to your wallet once verified\n`);
+  } catch (err: any) {
+    console.error(`  Signal intent failed: ${err.message}\n`);
+  }
+}
+
+// ── Create deposit (off-ramp position) ──────────────────
+
+export async function depositCreateCommand(amountStr: string, dryRun: boolean, platformFilter?: string) {
   validateAmount(amountStr);
   const { createDeposit } = await import('../providers/offramp/peer.js');
   const {
@@ -165,30 +316,46 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean) {
   }
 
   // Select payment platforms
-  console.log('  Select payment methods (enter numbers separated by commas):');
-  for (let i = 0; i < SUPPORTED_PLATFORMS.length; i++) {
-    console.log(`    ${i + 1}. ${getPlatformLabel(SUPPORTED_PLATFORMS[i])}`);
-  }
-
+  let selectedPlatforms: readonly string[];
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const platformAnswer = await new Promise<string>((resolve) => {
-    rl.question('  Platforms [1,2,3,...]: ', resolve);
-  });
 
-  const platformIndices = platformAnswer.split(',').map(s => parseInt(s.trim(), 10) - 1);
-  const selectedPlatforms = platformIndices
-    .filter(i => i >= 0 && i < SUPPORTED_PLATFORMS.length)
-    .map(i => SUPPORTED_PLATFORMS[i]);
+  if (platformFilter) {
+    const p = platformFilter.toLowerCase();
+    if (!SUPPORTED_PLATFORMS.includes(p as any)) {
+      rl.close();
+      console.error(`  Unknown platform: "${p}". Valid: ${SUPPORTED_PLATFORMS.join(', ')}`);
+      return;
+    }
+    selectedPlatforms = [p];
+    console.log(`  Platform: ${getPlatformLabel(p)}\n`);
+  } else {
+    console.log('  Select payment methods (enter numbers separated by commas):');
+    for (let i = 0; i < SUPPORTED_PLATFORMS.length; i++) {
+      console.log(`    ${i + 1}. ${getPlatformLabel(SUPPORTED_PLATFORMS[i])}`);
+    }
 
-  if (selectedPlatforms.length === 0) {
-    rl.close();
-    console.log('  No valid platforms selected. Cancelled.\n');
-    return;
+    const platformAnswer = await new Promise<string>((resolve) => {
+      rl.question('  Platforms [1,2,3,...]: ', resolve);
+    });
+
+    const platformIndices = platformAnswer.split(',').map(s => parseInt(s.trim(), 10) - 1);
+    selectedPlatforms = platformIndices
+      .filter(i => i >= 0 && i < SUPPORTED_PLATFORMS.length)
+      .map(i => SUPPORTED_PLATFORMS[i]);
+
+    if (selectedPlatforms.length === 0) {
+      rl.close();
+      console.log('  No valid platforms selected. Cancelled.\n');
+      return;
+    }
+
+    console.log(`  Selected: ${selectedPlatforms.map(getPlatformLabel).join(', ')}\n`);
   }
 
-  console.log(`  Selected: ${selectedPlatforms.map(getPlatformLabel).join(', ')}\n`);
+  // Collect deposit data (payment handles) per platform — use saved handles if available
+  const { getPaymentHandles } = await import('../lib/config.js');
+  const savedHandles = getPaymentHandles();
 
-  // Collect deposit data (payment handles) per platform
   const HANDLE_HINTS: Record<string, string> = {
     venmo: 'username or phone (e.g., @john-doe or 555-123-4567)',
     zelle: 'email or phone registered with your bank',
@@ -199,16 +366,22 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean) {
   const depositData: { [key: string]: string }[] = [];
   for (const platform of selectedPlatforms) {
     const label = getPlatformLabel(platform);
-    const hint = HANDLE_HINTS[platform] || 'handle/tag';
-    const handle = await new Promise<string>((resolve) => {
-      rl.question(`  ${label} (${hint}): `, resolve);
-    });
-    if (!handle.trim()) {
-      rl.close();
-      console.log(`  Empty handle for ${label}. Cancelled.\n`);
-      return;
+    const saved = (savedHandles as any)[platform];
+    if (saved) {
+      console.log(`  ${label}: ${saved} (from config)`);
+      depositData.push({ processorName: platform, id: saved });
+    } else {
+      const hint = HANDLE_HINTS[platform] || 'handle/tag';
+      const handle = await new Promise<string>((resolve) => {
+        rl.question(`  ${label} (${hint}): `, resolve);
+      });
+      if (!handle.trim()) {
+        rl.close();
+        console.log(`  Empty handle for ${label}. Cancelled.\n`);
+        return;
+      }
+      depositData.push({ processorName: platform, id: handle.trim() });
     }
-    depositData.push({ processorName: platform, id: handle.trim() });
   }
 
   // Spread percentage

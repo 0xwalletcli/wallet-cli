@@ -138,6 +138,8 @@ wallet config set signer evm browser     # EVM via browser extension (MetaMask, 
 wallet config set signer solana browser   # Solana via browser extension
 wallet config set signer solana env       # Solana via .env keys
 wallet config set signer env              # both chains via .env keys (default)
+wallet config set handle venmo @your-venmo-username    # payment handle for Peer off-ramp
+wallet config set handle zelle your-email@bank.com     # payment handle for Peer off-ramp
 wallet config reset                        # back to defaults
 ```
 
@@ -322,7 +324,7 @@ wallet withdraw history        # recent off-ramp activity
 | `wallet zap history` | Recent zap operations |
 | `wallet quote <amount>` | Compare end-to-end costs + yield projections (6 paths across all providers) |
 | `wallet config` | View current CLI configuration |
-| `wallet config set <key> <value> [chain]` | Set config (e.g., `config set swap cow`, `config set signer evm wc`) |
+| `wallet config set <key> <value> [chain]` | Set config (e.g., `config set swap cow`, `config set signer evm wc`, `config set handle venmo @user`) |
 | `wallet config reset` | Reset config to defaults (auto) |
 | `wallet audit` | Security audit of all integrations (required every 7 days for mainnet) |
 | `wallet health` | Check status of all RPCs, APIs, staking APR/APY, and asset prices |

@@ -80,7 +80,7 @@ src/
     index.ts            — resolveSigner() factory: reads per-chain config (SignerConfig), returns cached Signer (PerChainSigner if EVM/Solana differ)
   commands/
     connect.ts          — `wallet connect [evm [browser]]` / `wallet connect solana` / `wallet disconnect [evm|solana|wallet]` / `wallet keys` for wallet pairing (WC + browser, per-chain disconnect)
-    config.ts           — `wallet config` / `config set` / `config reset` for provider preferences
+    config.ts           — `wallet config` / `config set` / `config reset` for provider preferences + payment handles (`config set handle venmo @user`)
     balance.ts          — multi-chain balance display (Ethereum, Base, Solana). Default shows balances only; `full` adds staking dashboard (rates, APR/APY, earned, yields) + pending withdrawals. Supports external addresses/aliases, shows WSOL. Staked token labels link to Lido/Jito, wallet addresses link to explorers.
     value.ts            — `wallet value <amount> <token> [target]` USD pricing + cross-token conversion (e.g., `value 10000 usdc eth`). Staked assets show base+USD (stETH->ETH->USD, JitoSOL->SOL->USD). Gets stETH rate from Lido contract, JitoSOL rate from Jito pool.
     swap.ts             — multi-provider swap: auto-compares CoW/Uniswap/LI.FI (Ethereum), LI.FI (Base ETH-BASE<->USDC-BASE), Jupiter (Solana USDC<->SOL). Cross-chain pairs redirect to bridge. + history/status
@@ -127,7 +127,7 @@ src/
     solana.ts           — Solana connection, SOL/SPL/WSOL balance helpers, wrap/unwrap (accepts Signer)
     format.ts           — formatToken, parseTokenAmount, formatUSD, formatAddress, formatGasFee, link (OSC 8 hyperlink), txLink (shortened clickable tx hash)
     prompt.ts           — confirm(), validateAmount(), warnMainnet(), warnDryRun(), select() for provider selection
-    config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider, offrampProvider, per-chain signer (SignerConfig { evm, solana })
+    config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider, offrampProvider, per-chain signer (SignerConfig { evm, solana }), payment handles (HandleConfig { venmo, zelle, cashapp, revolut })
     spritz.ts           — Spritz Finance API client: payment requests, web3 tx params, bank account listing, payment history
     peer.ts             — Peer SDK wrapper: Zkp2pClient singleton, Base USDC helpers, payment platform config, spread/rate conversion
     addressbook.ts      — JSON-file address book (~/.wallet-cli/addresses.json)

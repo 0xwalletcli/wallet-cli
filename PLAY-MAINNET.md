@@ -120,6 +120,26 @@ wallet zap history
 
 ---
 
+## On-ramp: buy USDC with fiat (Peer P2P)
+
+Buy USDC directly with Venmo/Zelle/CashApp/Revolut. No CEX needed.
+
+```bash
+# Check available USDC to buy
+wallet deposit liquidity 1000
+
+# Buy USDC via Venmo (dry-run — preview sellers)
+wallet deposit 1000 --from venmo
+
+# Buy USDC via Venmo (execute — signal intent, then pay seller)
+wallet deposit 1000 --from venmo --run
+
+# Buy from any platform (shows all sellers, you pick)
+wallet deposit 1000 --run
+```
+
+---
+
 ## Exit flow: withdraw to bank or send to Coinbase
 
 When you want to cash out:
@@ -139,27 +159,35 @@ wallet withdraw history
 Lock USDC in escrow. Buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
 
 ```bash
-# 1. Check off-ramp liquidity
+# 1. Configure payment handles (one-time setup)
+wallet config set handle venmo @your-venmo-username
+wallet config set handle zelle your-email@bank.com
+wallet config                    # verify handles saved
+
+# 2. Check off-ramp liquidity
 wallet withdraw liquidity 5000
 
-# 2. Bridge USDC to Base (if not already there)
+# 3. Bridge USDC to Base (if not already there)
 wallet bridge 5000 usdc usdc-base --run
 
-# 3. Off-ramp — interactive flow picks payment methods + spread
+# 4. Off-ramp to Venmo (handles auto-filled from config)
+wallet withdraw 5000 --to venmo --run
+
+# Or: interactive flow — picks payment methods + spread
 wallet withdraw 5000 --run
 
-# 4. Monitor your positions
+# 5. Monitor your positions
 wallet withdraw list                        # active positions
 wallet withdraw liquidity 100               # check market
 
-# 5. Manage positions
+# 6. Manage positions
 wallet withdraw add 42 1000 --run           # add more funds
 wallet withdraw remove 42 500 --run         # remove excess
 wallet withdraw pause 42 --run              # stop accepting buyers
 wallet withdraw resume 42 --run             # resume
 wallet withdraw close 42 --run              # close + reclaim USDC
 
-# 6. Check history
+# 7. Check history
 wallet withdraw history
 ```
 
@@ -237,7 +265,8 @@ wallet balance
 | USDC -> JitoSOL | deBridge/LI.FI/Jupiter + Jito (~7% APR) |
 | ETH/USDC -> Base | deBridge/LI.FI bridge (low-fee operations) |
 | Base swaps | LI.FI (ETH-BASE <-> USDC-BASE) |
-| USDC -> Bank (off-ramp) | Spritz (ACH) or Peer (P2P on Base — Venmo/Zelle/CashApp/Revolut) |
+| Fiat -> USDC (on-ramp) | Peer P2P (`wallet deposit 1000 --from venmo --run`) |
+| USDC -> Fiat (off-ramp) | Peer P2P (`wallet withdraw 5000 --to venmo --run`) or Spritz ACH |
 
 ## Tips
 

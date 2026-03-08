@@ -436,29 +436,40 @@ program
 program
   .command('deposit [args...]')
   .description('Buy USDC with fiat (on-ramp)')
+  .option('--from <platform>', 'Payment platform (venmo, zelle, cashapp, revolut)')
   .addHelpText('after', `
   Usage:
-    deposit platforms             Supported payment platforms for buying USDC
-    deposit liquidity <amount>    Available USDC you can buy right now
+    deposit <amount>               Buy USDC with fiat (signal intent on Peer)
+    deposit <amount> --from venmo  Buy USDC, pay with Venmo
+    deposit platforms              Supported payment platforms
+    deposit liquidity <amount>     Available USDC you can buy right now
 
   Buy USDC via Peer P2P: pay fiat via Venmo/Zelle/CashApp/Revolut → receive USDC.
   Decentralized, non-custodial, no KYC.
 
   Examples:
-    wallet deposit platforms         See supported platforms
-    wallet deposit liquidity 1000    Check available USDC to buy
+    wallet deposit 100                  Buy 100 USDC (shows all sellers)
+    wallet deposit 100 --from venmo     Buy 100 USDC, pay with Venmo
+    wallet deposit platforms            See supported platforms
+    wallet deposit liquidity 1000       Check available USDC to buy
 `)
-  .action(timed(async (args: string[]) => {
+  .action(timed(async (args: string[], cmdOpts: any) => {
     if (args[0] === 'platforms') {
       const { depositPlatformsCommand } = await import('./commands/deposit.js');
       await depositPlatformsCommand();
     } else if (args[0] === 'liquidity' && args[1]) {
       const { depositLiquidityCommand } = await import('./commands/deposit.js');
       await depositLiquidityCommand(args[1]);
+    } else if (args.length >= 1 && !isNaN(Number(args[0]))) {
+      checkAuditGate(getNetwork(program), getDryRun(program));
+      const { depositBuyCommand } = await import('./commands/deposit.js');
+      await depositBuyCommand(args[0], getDryRun(program), cmdOpts.from);
     } else {
-      console.error('  Usage: wallet deposit platforms              Supported payment platforms');
-      console.error('         wallet deposit liquidity <amount>     Available USDC to buy');
-      console.error('         wallet deposit --help                 Full help');
+      console.error('  Usage: wallet deposit <amount>                Buy USDC with fiat');
+      console.error('         wallet deposit <amount> --from venmo   Pay with Venmo');
+      console.error('         wallet deposit platforms               Supported platforms');
+      console.error('         wallet deposit liquidity <amount>      Available USDC to buy');
+      console.error('         wallet deposit --help                  Full help');
       process.exit(1);
     }
   }));
@@ -467,9 +478,11 @@ program
 program
   .command('withdraw [args...]')
   .description('Convert USDC to fiat (off-ramp) via Spritz ACH or Peer P2P')
+  .option('--to <platform>', 'Payment platform (venmo, zelle, cashapp, revolut)')
   .addHelpText('after', `
   Usage:
     withdraw <amount>                Off-ramp USDC to fiat (Spritz ACH or Peer P2P)
+    withdraw <amount> --to venmo     Off-ramp to Venmo only
     withdraw liquidity <amount>      Check available off-ramp liquidity
     withdraw list [closed]           List your active Peer positions
     withdraw add <positionId> <amt>  Add USDC to a Peer position
@@ -487,11 +500,12 @@ program
 
   Examples:
     wallet withdraw 1000 --run              Off-ramp $1000 USDC
+    wallet withdraw 1000 --to venmo --run   Off-ramp to Venmo
     wallet withdraw liquidity 5000          Check liquidity for $5K
     wallet withdraw list                    View active positions
     wallet withdraw close 42 --run          Close position #42
 `)
-  .action(timed(async (args: string[]) => {
+  .action(timed(async (args: string[], cmdOpts: any) => {
     if (args[0] === 'liquidity' && args[1] && !isNaN(Number(args[1]))) {
       const { withdrawLiquidityCommand } = await import('./commands/withdraw.js');
       await withdrawLiquidityCommand(args[1]);
@@ -530,7 +544,7 @@ program
     } else if (args.length === 1 && !isNaN(Number(args[0]))) {
       checkAuditGate(getNetwork(program), getDryRun(program));
       const { withdrawCommand } = await import('./commands/withdraw.js');
-      await withdrawCommand(args[0], getNetwork(program), getDryRun(program));
+      await withdrawCommand(args[0], getNetwork(program), getDryRun(program), cmdOpts.to);
     } else {
       console.error('  Usage: wallet withdraw <amount>              Off-ramp USDC to fiat');
       console.error('         wallet withdraw liquidity <amount>    Check off-ramp liquidity');
@@ -590,7 +604,28 @@ addressCmd
 // wallet config
 const configCmd = program
   .command('config')
-  .description('View or set CLI configuration');
+  .description('View or set CLI configuration')
+  .addHelpText('after', `
+  Keys:
+    swap       auto, cow, uniswap, lifi
+    bridge     auto, debridge, lifi
+    offramp    auto, spritz, peer
+    signer     env, wc, browser
+    handle     venmo, zelle, cashapp, revolut
+
+  Examples:
+    wallet config                              Show current config
+    wallet config set swap cow                 Pin CoW Swap as default
+    wallet config set offramp peer             Use Peer P2P for off-ramp
+    wallet config set offramp spritz           Use Spritz ACH for off-ramp
+    wallet config set signer evm wc            EVM via WalletConnect
+    wallet config set signer solana browser    Solana via browser extension
+    wallet config set handle venmo @john       Save Venmo handle
+    wallet config set handle zelle you@bank.com  Save Zelle handle
+    wallet config set handle cashapp $john     Save Cash App handle
+    wallet config set handle revolut @john     Save Revolut handle
+    wallet config reset                        Reset all to defaults
+`);
 
 configCmd
   .action(async () => {
@@ -601,23 +636,6 @@ configCmd
 configCmd
   .command('set <key> <value> [extra]')
   .description('Set a config value')
-  .addHelpText('after', `
-  Keys:
-    swap       auto, cow, uniswap, lifi
-    bridge     auto, debridge, lifi
-    signer     env, wc, browser
-
-  Per-chain signer:
-    config set signer evm wc            EVM via WalletConnect (MetaMask)
-    config set signer solana browser    Solana via browser wallet (Phantom)
-    config set signer solana env        Solana via .env keys
-
-  Examples:
-    config set swap cow
-    config set bridge lifi
-    config set signer evm wc
-    config set signer solana browser
-`)
   .action(async (key: string, value: string, extra?: string) => {
     const { configSetCommand } = await import('./commands/config.js');
     configSetCommand(key, value, extra);
