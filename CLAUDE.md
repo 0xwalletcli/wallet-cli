@@ -98,8 +98,8 @@ src/
     tokens.ts           — supported token reference (addresses, decimals, explorer links, includes WSOL)
     health.ts           — service status dashboard (RPCs, APIs, staking APR/APY, prices)
     mint.ts             — testnet faucet (SOL airdrop programmatic, ETH/USDC print URLs)
-    deposit.ts          — Peer P2P deposit management on Base. Subcommands: list [closed], liquidity <amt>, <amt> (create), add/remove/close/pause/resume <id>, history
-    withdraw.ts         — withdraw USDC to bank via off-ramp (Spritz). Subcommands: accounts, history
+    deposit.ts          — On-ramp (fiat → USDC): platforms, liquidity preview. Also contains Peer position management functions called from withdraw command.
+    withdraw.ts         — Off-ramp (USDC → fiat): Peer P2P + Spritz ACH. Subcommands: liquidity, list, add/remove/close/pause/resume, platforms, accounts, history
     cancel.ts           — cancel pending CoW Swap orders
     address.ts          — address book management
   providers/
@@ -114,7 +114,7 @@ src/
       lifi.ts           — LI.FI/Jumper bridge provider: cross-chain via aggregated bridges, poll via /status
     offramp/
       spritz.ts         — Spritz Finance off-ramp provider: USDC -> bank via ACH (WIP, account disabled)
-      peer.ts           — Peer off-ramp provider: decentralized P2P on Base. Deposit management (create, add/remove funds, close, pause/resume), liquidity preview, intent history. Non-custodial, no KYC.
+      peer.ts           — Peer off-ramp provider: decentralized P2P on Base. Position management (create, add/remove funds, close, pause/resume), liquidity preview, intent history. Non-custodial, no KYC.
   lib/
     prices.ts           — shared price fetcher: CoinGecko primary + DeFi Llama fallback. Used by balance, value, quote, zap, health.
     jupiter.ts          — shared Jupiter API helpers: getJupiterQuote(), buildAndSendJupiterSwap(), getJupiterHistory(), mint/decimals lookup
@@ -145,8 +145,8 @@ swap, bridge, buy, stake, unstake, zap support subcommands via `[args...]` varia
 | `wallet stake` | `history`, `--help` |
 | `wallet unstake` | `history`, `--help` |
 | `wallet zap` | `history`, `--help` |
-| `wallet deposit` | `platforms`, `list [closed]`, `liquidity <amt>`, `<amt>` (create), `add <id> <amt>`, `remove <id> <amt>`, `close <id>`, `pause <id>`, `resume <id>`, `history`, `--help` |
-| `wallet withdraw` | `accounts`, `history`, `--help` |
+| `wallet deposit` | `platforms`, `liquidity <amt>`, `--help` |
+| `wallet withdraw` | `<amt>` (off-ramp), `liquidity <amt>`, `list [closed]`, `add <id> <amt>`, `remove <id> <amt>`, `close <id>`, `pause <id>`, `resume <id>`, `platforms`, `accounts`, `history`, `--help` |
 
 - `history` shows recent orders/transactions for that command
 - `status <orderId>` shows detailed info for a specific order (swap/bridge only)

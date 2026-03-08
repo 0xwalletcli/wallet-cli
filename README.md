@@ -15,7 +15,8 @@ CLI tool for managing crypto without centralized exchanges.
 - **Transactions** history across Ethereum, Base, and Solana with clickable explorer links
 - **Wrap/Unwrap** native assets: ETH ↔ WETH, SOL ↔ WSOL
 - **Audit** all integrations before mainnet transactions (prices, pools, contracts, APIs)
-- **Withdraw** USDC to bank (Spritz) or via P2P off-ramp ([Peer](https://peer.xyz) (prev ZKP2P) — decentralized, non-custodial, no KYC, Base chain)
+- **Deposit** fiat to buy USDC via P2P ([Peer](https://peer.xyz) — decentralized, non-custodial, no KYC)
+- **Withdraw** USDC to fiat via [Peer](https://peer.xyz) P2P (Venmo/Zelle/CashApp/Revolut, Base chain) or [Spritz](https://spritz.finance) ACH
 - **Connect** MetaMask, Coinbase Wallet, Phantom (EVM via WalletConnect or browser extension; Solana via browser extension) — sign transactions without storing private keys
 - **Address book** for human-readable wallet names
 - **Price fallback** — CoinGecko primary, DeFi Llama fallback (never blocked by rate limits)
@@ -238,32 +239,35 @@ wallet unstake claim steth --run
 wallet unstake 10 jitosol --run
 ```
 
-### 10. P2P deposits (Peer off-ramp on Base)
+### 10. Deposit — on-ramp (fiat → USDC)
 
-Deposit USDC as LP — buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
+Check available USDC to buy via Peer P2P.
 
 ```bash
-# Create a deposit (interactive — pick payment methods + spread)
-wallet deposit 500
-
-# Manage deposits
-wallet deposit list                          # active deposits table
-wallet deposit list closed                   # closed deposits
-wallet deposit liquidity 100                 # preview orderbook for $100
-wallet deposit add 42 200 --run              # add $200 to deposit #42
-wallet deposit remove 42 100 --run           # remove $100 from deposit #42
-wallet deposit close 42 --run                # close + withdraw all funds
-wallet deposit pause 42 --run                # stop accepting buyers
-wallet deposit resume 42 --run               # resume
-wallet deposit history                       # recent intents
+wallet deposit platforms                     # supported payment platforms
+wallet deposit liquidity 1000               # available USDC to buy
 ```
 
-### 11. Withdraw USDC to bank (Spritz)
+### 11. Withdraw — off-ramp (USDC → fiat)
+
+Off-ramp via Peer P2P (Venmo/Zelle/CashApp/Revolut) or Spritz ACH.
 
 ```bash
-wallet withdraw accounts                     # list linked bank accounts
-wallet withdraw 500 --run                    # withdraw to bank
-wallet withdraw history                      # recent withdrawals
+# Off-ramp USDC to fiat
+wallet withdraw 1000 --run                   # lock USDC, select platforms + spread
+wallet withdraw liquidity 5000              # check off-ramp liquidity
+
+# Manage positions
+wallet withdraw list                         # active positions
+wallet withdraw list closed                  # closed positions
+wallet withdraw add 42 200 --run             # add $200 to position #42
+wallet withdraw remove 42 100 --run          # remove $100 from position #42
+wallet withdraw close 42 --run               # close position + reclaim USDC
+wallet withdraw pause 42 --run               # stop accepting buyers
+wallet withdraw resume 42 --run              # resume
+wallet withdraw platforms                    # supported payment platforms
+wallet withdraw accounts                     # linked bank accounts (Spritz)
+wallet withdraw history                      # recent activity
 ```
 
 ### 12. Send to external wallets
@@ -288,9 +292,8 @@ wallet stake history           # recent staking transactions
 wallet unstake history         # recent unstakes + pending Lido withdrawals
 wallet zap history             # recent zap operations
 wallet buy history             # recent buy orders
-wallet deposit list            # active Peer deposits
-wallet deposit history         # recent P2P intents
-wallet withdraw history        # recent bank withdrawals
+wallet withdraw list            # active Peer positions
+wallet withdraw history        # recent off-ramp activity
 ```
 
 ## All Commands
@@ -327,17 +330,18 @@ wallet withdraw history        # recent bank withdrawals
 | `wallet tokens` | Show supported tokens, addresses, and explorer links |
 | `wallet mint <token> [amount]` | Get testnet tokens — `mint eth`, `mint usdc` (faucet links), `mint sol 2` (airdrop) |
 | `wallet approve <token> <spender> <amt>` | ERC-20 approval helper |
-| `wallet deposit <amount>` | Create a new P2P deposit on Base (interactive — platforms, spreads) |
-| `wallet deposit list [closed]` | List active or closed Peer deposits |
-| `wallet deposit liquidity <amount>` | Preview P2P orderbook liquidity for an amount |
-| `wallet deposit add <id> <amount>` | Add funds to existing deposit |
-| `wallet deposit remove <id> <amount>` | Remove funds from deposit |
-| `wallet deposit close <id>` | Close deposit and withdraw all funds |
-| `wallet deposit pause/resume <id>` | Pause or resume accepting buyers |
-| `wallet deposit history` | Recent intents / buyer activity |
-| `wallet withdraw <amount>` | Withdraw USDC to bank account (Spritz, mainnet only) |
-| `wallet withdraw accounts` | List linked bank accounts |
-| `wallet withdraw history` | Recent withdrawals |
+| `wallet deposit platforms` | Supported payment platforms for buying USDC |
+| `wallet deposit liquidity <amount>` | Available USDC to buy via Peer P2P (on-ramp) |
+| `wallet withdraw <amount>` | Off-ramp USDC to fiat via Peer P2P or Spritz ACH |
+| `wallet withdraw liquidity <amount>` | Check off-ramp liquidity |
+| `wallet withdraw list [closed]` | List active or closed Peer positions |
+| `wallet withdraw add <id> <amount>` | Add USDC to a position |
+| `wallet withdraw remove <id> <amount>` | Remove USDC from a position |
+| `wallet withdraw close <id>` | Close position and reclaim USDC |
+| `wallet withdraw pause/resume <id>` | Pause or resume accepting buyers |
+| `wallet withdraw platforms` | Supported payment platforms (Peer) |
+| `wallet withdraw accounts` | List linked bank accounts (Spritz) |
+| `wallet withdraw history` | Recent off-ramp activity |
 | `wallet cancel [orderId]` | Cancel a pending CoW Swap order |
 | `wallet connect [chain] [browser]` | Connect wallet — EVM via WalletConnect or `evm browser`; Solana via browser (MetaMask, Coinbase, Phantom, Solflare) |
 | `wallet disconnect [target]` | Disconnect session(s) — WC + browser (`disconnect evm`, `disconnect solana`, `disconnect metamask`, or all) |
@@ -407,19 +411,19 @@ wallet withdraw history        # recent bank withdrawals
 [Peer](https://peer.xyz) (prev ZKP2P) is a decentralized P2P off-ramp. Here's exactly what happens on-chain vs off-chain:
 
 **On-chain (trustless, verifiable on Base):**
-- USDC escrow — deposits are locked in smart contracts (`0x2f121cdd...88888`), not held by Peer
+- USDC escrow — positions are locked in smart contracts (`0x2f121cdd...88888`), not held by Peer
 - Intent signaling — buyer commits to purchase on-chain
 - Fund release — USDC released to buyer after zero-knowledge proof of fiat payment
 - All custody is non-custodial — the protocol contracts hold funds, not any company
 
 **Off-chain (centralized API at `api.zkp2p.xyz`):**
-- Liquidity discovery — finding available deposits and matching buyers to sellers
+- Liquidity discovery — finding available positions and matching buyers to sellers
 - Quote/pricing — the `/v2/quote` endpoint aggregates available LP rates
 - ZK proof verification relay — verifying proof-of-payment (e.g., you prove you sent Venmo without revealing account details)
 
-**Why we use the API:** The on-chain contracts don't have a built-in order book. To find available deposits and their rates, you'd have to scan all contract events and index them yourself — which is what Peer's indexer (`indexer.hyperindex.xyz`) does. The API is a convenience layer over on-chain state. We could theoretically read deposits directly from the contract, but it would be significantly slower and more complex.
+**Why we use the API:** The on-chain contracts don't have a built-in order book. To find available positions and their rates, you'd have to scan all contract events and index them yourself — which is what Peer's indexer (`indexer.hyperindex.xyz`) does. The API is a convenience layer over on-chain state. We could theoretically read positions directly from the contract, but it would be significantly slower and more complex.
 
-**Supported payment platforms:** Venmo, Zelle, CashApp, Revolut. Available liquidity varies by platform and changes in real-time — `wallet quote` and `wallet health` show current availability.
+**Supported payment platforms:** Venmo, Zelle, CashApp, Revolut. Available liquidity varies by platform and changes in real-time — `wallet quote`, `wallet withdraw liquidity`, and `wallet health` show current availability.
 
 ## How It Works
 

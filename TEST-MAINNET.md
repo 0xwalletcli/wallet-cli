@@ -390,17 +390,18 @@ wallet withdraw history
 
 ## Phase 15b: P2P Off-ramp via Peer (sell USDC on Base, receive fiat)
 
-Peer is a decentralized P2P off-ramp on Base. You deposit USDC into escrow,
+Peer is a decentralized P2P off-ramp on Base. You lock USDC into escrow,
 buyers pay you fiat (Venmo, Zelle, CashApp, Revolut), and the escrow releases
 USDC to them. You keep the fiat + your spread. No KYC, non-custodial.
 
 Requires an EVM signer (env key, WalletConnect, or browser) and USDC on Base.
 
-### Step 0: Discover supported platforms
+### Step 0: Check liquidity + platforms
 
 ```bash
-# 15b.0 — See all supported payment platforms + handle formats
-wallet deposit platforms
+# 15b.0 — Check off-ramp liquidity and supported platforms
+wallet withdraw liquidity 5
+wallet withdraw platforms
 ```
 
 ### Step 1: Get USDC onto Base
@@ -413,65 +414,65 @@ wallet bridge 10 usdc usdc-base --run
 wallet balance
 ```
 
-### Step 2: Set up a deposit with Venmo + Zelle (Citi)
+### Step 2: Off-ramp with Venmo + Zelle (Citi)
 
 ```bash
-# 15b.3 — Create a deposit (dry-run — preview only)
-wallet deposit 5
+# 15b.3 — Off-ramp (dry-run — preview only)
+wallet withdraw 5
 
-# 15b.4 — Create a deposit (execute — interactive flow)
+# 15b.4 — Off-ramp (execute — interactive flow)
 #          Select platforms: 1,2 (Venmo + Zelle)
 #          Venmo handle:  @your-venmo-username
 #          Zelle handle:  your-email@citibank.com  (or phone registered with Citi)
 #          Spread:        2 (2% — buyer pays $5.10 for $5 USDC)
-wallet deposit 5 --run
+wallet withdraw 5 --run
 
-# 15b.5 — List active deposits — verify it shows with both platforms
-wallet deposit list
+# 15b.5 — List active positions — verify it shows with both platforms
+wallet withdraw list
 
-# 15b.6 — Preview orderbook — this is what buyers see on peer.xyz
-wallet deposit liquidity 5
+# 15b.6 — Check off-ramp liquidity
+wallet withdraw liquidity 5
 ```
 
-### Step 3: Manage the deposit
+### Step 3: Manage positions
 
 ```bash
-# 15b.7 — Add more funds to the deposit
-wallet deposit add <depositId> 3 --run
+# 15b.7 — Add more funds to a position
+wallet withdraw add <positionId> 3 --run
 
 # 15b.8 — Remove some funds
-wallet deposit remove <depositId> 2 --run
+wallet withdraw remove <positionId> 2 --run
 
-# 15b.9 — Pause deposit (stop accepting buyers temporarily)
-wallet deposit pause <depositId> --run
+# 15b.9 — Pause position (stop accepting buyers temporarily)
+wallet withdraw pause <positionId> --run
 
-# 15b.10 — Resume deposit
-wallet deposit resume <depositId> --run
+# 15b.10 — Resume position
+wallet withdraw resume <positionId> --run
 ```
 
 ### Step 4: Monitor + close
 
 ```bash
 # 15b.11 — Check if any buyers have signaled intent / completed purchases
-wallet deposit history
+wallet withdraw history
 
-# 15b.12 — Close deposit (withdraw all remaining USDC back to your wallet)
-wallet deposit close <depositId> --run
+# 15b.12 — Close position (reclaim all remaining USDC)
+wallet withdraw close <positionId> --run
 
 # 15b.13 — Verify closed
-wallet deposit list
-wallet deposit list closed
+wallet withdraw list
+wallet withdraw list closed
 ```
 
 ### How you actually get paid
 
-Once your deposit is live, buyers find it on [peer.xyz](https://peer.xyz):
-1. Buyer selects your deposit and signals intent (locks USDC in escrow)
+Once your position is live, buyers find it on [peer.xyz](https://peer.xyz):
+1. Buyer selects your position and signals intent (locks USDC in escrow)
 2. Buyer sends you fiat via Venmo/Zelle/CashApp/Revolut
 3. Buyer proves payment with zkTLS → escrow releases USDC to buyer
 4. You receive fiat in your Venmo/Zelle account — done
 
-Monitor buyer activity with `wallet deposit history`.
+Monitor buyer activity with `wallet withdraw history`.
 
 ---
 
@@ -500,8 +501,7 @@ wallet bridge history
 wallet stake history
 wallet unstake history
 wallet zap history
-wallet deposit list
-wallet deposit history
+wallet withdraw list
 wallet withdraw history
 wallet txs --limit 20
 
@@ -536,8 +536,8 @@ wallet balance
 | Bridge SOL -> ETH | Reverse direction | `wallet bridge 0.01 sol eth --run` |
 | Swap WSOL-ETH | Need to buy WSOL-ETH first | `wallet buy 0.5 wsol-eth --run` then `wallet swap 0.5 wsol-eth eth --run` |
 | Send USDC (ERC-20 transfer) | Same as send ETH, just ERC-20 | `wallet send 1 usdc <address> --run` |
-| Deposit with all 4 platforms | Need handles for all | `wallet deposit 10 --run` select 1,2,3,4 |
-| Deposit buyer intent | Need a buyer on peer.xyz | Wait for buyer activity, check `wallet deposit history` |
+| Off-ramp with all 4 platforms | Need handles for all | `wallet withdraw 10 --run` select 1,2,3,4 |
+| Position buyer intent | Need a buyer on peer.xyz | Wait for buyer activity, check `wallet withdraw history` |
 
 ---
 

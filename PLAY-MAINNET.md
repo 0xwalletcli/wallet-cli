@@ -136,28 +136,31 @@ wallet withdraw history
 
 ### Option A2: P2P off-ramp via Peer (decentralized, on Base)
 
-Deposit USDC as LP. Buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
+Lock USDC in escrow. Buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
 
 ```bash
-# 1. Bridge USDC to Base (if not already there)
+# 1. Check off-ramp liquidity
+wallet withdraw liquidity 5000
+
+# 2. Bridge USDC to Base (if not already there)
 wallet bridge 5000 usdc usdc-base --run
 
-# 2. Create a deposit — interactive flow picks payment methods + spread
-wallet deposit 5000
+# 3. Off-ramp — interactive flow picks payment methods + spread
+wallet withdraw 5000 --run
 
-# 3. Monitor your deposits
-wallet deposit list                         # active deposits table
-wallet deposit liquidity 100                # preview what buyers see
+# 4. Monitor your positions
+wallet withdraw list                        # active positions
+wallet withdraw liquidity 100               # check market
 
-# 4. Manage deposits
-wallet deposit add 42 1000 --run            # add more funds
-wallet deposit remove 42 500 --run          # remove excess
-wallet deposit pause 42 --run               # stop accepting buyers
-wallet deposit resume 42 --run              # resume
-wallet deposit close 42 --run               # close + withdraw all
+# 5. Manage positions
+wallet withdraw add 42 1000 --run           # add more funds
+wallet withdraw remove 42 500 --run         # remove excess
+wallet withdraw pause 42 --run              # stop accepting buyers
+wallet withdraw resume 42 --run             # resume
+wallet withdraw close 42 --run              # close + reclaim USDC
 
-# 5. Check intent history
-wallet deposit history
+# 6. Check history
+wallet withdraw history
 ```
 
 ### Option B: Unstake + send to Coinbase
