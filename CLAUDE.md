@@ -12,6 +12,12 @@ npm run wallet -- <args>   # via npm script
 
 Default network is `mainnet`. Use `--network testnet` or `-n testnet` for testnet.
 
+## Debugging Rules
+
+- **Never paper over bugs with timeouts, retries, or workarounds.** Always find and fix the root cause. A timeout that "fixes" a slow call is hiding the real problem.
+- **Isolate before fixing.** When something is slow or broken, strip the call down to its simplest form (remove params one by one, test the bare endpoint, etc.) to find exactly what triggers the issue. Don't guess — test.
+- **Simplify the problem.** If an API call hangs, try it without optional params. If a function is slow, time each part individually. The fastest path to the root cause is eliminating variables, not adding defensive code.
+
 ## Conventions
 
 - **When adding new commands**: always update `README.md` (All Commands table + workflow examples) and this `CLAUDE.md` file (Architecture section + any relevant sections).

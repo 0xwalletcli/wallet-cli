@@ -41,6 +41,8 @@ const ALLOWED_HOSTS = new Set([
   'api.basescan.org',
   'basescan.org',
   'sepolia.basescan.org',
+  // Blockscout (free Base tx history — Etherscan V2 requires paid plan for Base)
+  'base.blockscout.com',
   // Uniswap Trading API
   'trade-api.gateway.uniswap.org',
   // LI.FI / Jumper

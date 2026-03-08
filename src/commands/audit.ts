@@ -1,7 +1,7 @@
 import { PublicKey } from '@solana/web3.js';
 import { createPublicClient, http, parseAbi, type Chain } from 'viem';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
-import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmRpcUrl, getEvmChain } from '../config.js';
+import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, BLOCKSCOUT_BASE_API, getEvmRpcUrl, getEvmChain } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getPublicClient } from '../lib/evm.js';
 import { getConnection } from '../lib/solana.js';
@@ -24,6 +24,7 @@ const REQUIRED_HOSTS = [
   'trade-api.gateway.uniswap.org',
   'li.quest',
   'api.spritz.finance',
+  'base.blockscout.com',
 ];
 
 // minimum pool sizes to consider healthy
@@ -277,7 +278,7 @@ export async function auditCommand(network: Network) {
   const [
     evmBlock, baseBlock, solSlot, marketPrices,
     cowEth, cowWsol, jupSol, deBridgeSol,
-    deBridgeStatus, etherscanCheck, stethRatio, lidoSupply, jitoPool,
+    deBridgeStatus, etherscanCheck, blockscoutCheck, stethRatio, lidoSupply, jitoPool,
     uniswapCheck, lifiCheck, spritzCheck,
   ] = await Promise.allSettled([
     // Infrastructure
@@ -323,6 +324,27 @@ export async function auditCommand(network: Network) {
       }
       return { ms: Date.now() - start };
     })() : Promise.resolve(null),
+    // Blockscout API (Base tx history — free, no key)
+    (async () => {
+      const start = Date.now();
+      const params = new URLSearchParams({
+        module: 'account',
+        action: 'txlist',
+        address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+        startblock: '0',
+        endblock: '99999999',
+        page: '1',
+        offset: '1',
+        sort: 'desc',
+      });
+      const res = await withTimeout(fetch(`${BLOCKSCOUT_BASE_API}?${params}`), TIMEOUT);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { status: string; message: string; result: unknown };
+      if (data.status !== '1' || !Array.isArray(data.result)) {
+        throw new Error(typeof data.result === 'string' ? data.result : data.message || 'invalid response');
+      }
+      return { ms: Date.now() - start };
+    })(),
     // On-chain reads
     getStethRatio(network),
     withTimeout(client.readContract({
@@ -433,6 +455,15 @@ export async function auditCommand(network: Network) {
   } else {
     printCheck('Etherscan API', 'fail', etherscanCheck.reason?.message || 'failed');
     record('Etherscan API', 'fail', etherscanCheck.reason?.message || 'failed');
+  }
+
+  // Blockscout API (Base tx history)
+  if (blockscoutCheck.status === 'fulfilled') {
+    printCheck('Blockscout (Base)', 'ok', `OK (${blockscoutCheck.value.ms}ms)`);
+    record('Blockscout Base', 'ok', `OK (${blockscoutCheck.value.ms}ms)`);
+  } else {
+    printCheck('Blockscout (Base)', 'fail', blockscoutCheck.reason?.message || 'failed');
+    record('Blockscout Base', 'fail', blockscoutCheck.reason?.message || 'failed');
   }
 
   // Tier 2: Market Prices

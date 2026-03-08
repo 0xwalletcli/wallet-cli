@@ -1,5 +1,5 @@
 import { PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { type Network, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, BASESCAN_CHAIN_ID, EXPLORERS, TOKENS, BASE_TOKENS, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, SOLANA_MINTS, HISTORY_LIMIT } from '../config.js';
+import { type Network, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, BLOCKSCOUT_BASE_API, EXPLORERS, TOKENS, BASE_TOKENS, LIDO_CONFIG, JITO_CONFIG, WSOL_CONFIG, SOLANA_MINTS, HISTORY_LIMIT } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getConnection } from '../lib/solana.js';
 import { formatToken, formatAddress } from '../lib/format.js';
@@ -99,46 +99,52 @@ export async function transactionsCommand(network: Network, limit: number) {
     apikey: apiKey || '',
   } : null;
 
-  // Base tx history via Etherscan V2 requires a paid plan — try anyway, fail gracefully
-  const baseChainParams = evmAddress ? {
-    chainid: BASESCAN_CHAIN_ID[network],
+  // Base tx history via Blockscout (free, no API key needed)
+  // Note: Blockscout hangs when page/offset params are included on tokentx — omit them
+  const baseParams = evmAddress ? {
     module: 'account',
     address: evmAddress,
-    startblock: '0',
-    endblock: '99999999',
-    page: '1',
-    offset: String(limit),
     sort: 'desc',
-    apikey: apiKey || '',
   } : null;
 
-  const fetchEtherscan = (params: Record<string, string>, action: string) => async () => {
-    const qs = new URLSearchParams({ ...params, action });
-    const res = await fetch(`${ETHERSCAN_API}?${qs}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return (await res.json()) as { status: string; result: any[] | string };
+  const FETCH_TIMEOUT = 5_000;
+
+  const fetchWithTimeout = (url: string) => async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return (await res.json()) as { status: string; result: any[] | string };
+    } finally {
+      clearTimeout(timer);
+    }
   };
+
+  const fetchEtherscan = (params: Record<string, string>, action: string) =>
+    fetchWithTimeout(`${ETHERSCAN_API}?${new URLSearchParams({ ...params, action })}`);
+
+  const fetchBlockscout = (params: Record<string, string>, action: string) =>
+    fetchWithTimeout(`${BLOCKSCOUT_BASE_API}?${new URLSearchParams({ ...params, action })}`);
 
   const evmTxPromise = (apiKey && ethParams) ? fetchEtherscan(ethParams, 'txlist')() : null;
   const tokenTxPromise = (apiKey && ethParams) ? fetchEtherscan(ethParams, 'tokentx')() : null;
   const internalTxPromise = (apiKey && ethParams) ? fetchEtherscan(ethParams, 'txlistinternal')() : null;
-  const baseTxPromise = (apiKey && baseChainParams) ? fetchEtherscan(baseChainParams, 'txlist')() : null;
-  const baseTokenTxPromise = (apiKey && baseChainParams) ? fetchEtherscan(baseChainParams, 'tokentx')() : null;
+  const baseTxPromise = baseParams ? fetchBlockscout(baseParams, 'txlist')() : null;
+  const baseTokenTxPromise = baseParams ? fetchBlockscout(baseParams, 'tokentx')() : null;
 
   // Track which Solana connection to use for parsed tx details
+  // publicnode doesn't index tx history — go straight to mainnet-beta unless user set SOLANA_RPC_URL
   let solConn = getConnection(network);
   let usedFallbackRpc = false;
+  if (network === 'mainnet' && !process.env.SOLANA_RPC_URL) {
+    const { Connection: SolConnection } = await import('@solana/web3.js');
+    solConn = new SolConnection('https://api.mainnet-beta.solana.com');
+    usedFallbackRpc = true;
+  }
   const solPromise = solAddress ? (async () => {
     const pubkey = new PublicKey(solAddress);
-    const sigs = await solConn.getSignaturesForAddress(pubkey, { limit: limit * 3 });
-    // Public RPCs (e.g. publicnode) often don't index history — fallback to Solana's RPC
-    if (sigs.length === 0 && network === 'mainnet' && !process.env.SOLANA_RPC_URL) {
-      const { Connection: SolConnection } = await import('@solana/web3.js');
-      solConn = new SolConnection('https://api.mainnet-beta.solana.com');
-      usedFallbackRpc = true;
-      return solConn.getSignaturesForAddress(pubkey, { limit: limit * 3 });
-    }
-    return sigs;
+    return solConn.getSignaturesForAddress(pubkey, { limit: limit * 3 });
   })() : null;
 
   const [evmTxResult, tokenTxResult, internalTxResult, baseTxResult, baseTokenTxResult, solResult] = await Promise.allSettled([
@@ -321,7 +327,7 @@ export async function transactionsCommand(network: Network, limit: number) {
     const baseDeduped = baseEntries.filter(e => e.amount > 0 || !baseHashesWithAmounts.has(e.hash));
 
     if (baseDeduped.length === 0) {
-      console.log('  View transactions on BaseScan (no free API available)');
+      console.log('  No transactions found.\n');
     } else {
       baseDeduped.sort((a, b) => b.timestamp - a.timestamp);
       const display = baseDeduped.slice(0, limit);
