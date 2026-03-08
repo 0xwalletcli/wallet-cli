@@ -619,11 +619,133 @@ interface Signer {
 
 ---
 
+## Feature 20: Guided Setup (`wallet setup`)
+
+**Status:** TODO — HIGH PRIORITY (reduces onboarding friction)
+
+**Problem:** Getting wallet-cli up and running requires manually creating `.env`, generating multiple API keys from different sites, configuring signers, running audit, etc. Too much friction for new users.
+
+**Solution:** `wallet setup` — an interactive guided wizard that walks through everything step by step.
+
+### Flow
+
+```
+$ wallet setup
+
+  wallet-cli setup
+  ─────────────────
+
+  Step 1/6: EVM wallet
+
+    How do you want to sign Ethereum/Base transactions?
+    1. Private key (paste into .env — simplest)
+    2. WalletConnect (scan QR with MetaMask mobile)
+    3. Browser extension (MetaMask, Coinbase Wallet, Phantom)
+
+    > 2
+    ✓ WalletConnect connected: 0xDd10...e31B
+
+  Step 2/6: Solana wallet
+
+    How do you want to sign Solana transactions?
+    1. Private key (paste into .env)
+    2. Browser extension (Phantom, Solflare, Backpack)
+    3. Skip (Solana features disabled)
+
+    > 2
+    ✓ Browser signer connected: 6MAC...N93D
+
+  Step 3/6: API keys (optional — enhance functionality)
+
+    Uniswap API key (free — developers.uniswap.org)
+    Enables Uniswap swaps + UniswapX gasless orders.
+    > [paste or Enter to skip]
+
+    Etherscan API key (free — etherscan.io/apis)
+    Enables transaction history + stake/unstake history.
+    > [paste or Enter to skip]
+
+    LI.FI API key (free — li.fi)
+    Increases rate limit for LI.FI swaps/bridges.
+    > [paste or Enter to skip]
+
+    Spritz API key (spritz.finance — US only)
+    Enables bank withdrawals via ACH.
+    > [paste or Enter to skip]
+
+  Step 4/6: RPC endpoints (optional — override defaults)
+
+    Default RPCs are publicnode.com (free, no key needed).
+    Custom Ethereum RPC URL? [Enter to skip]
+    Custom Base RPC URL? [Enter to skip]
+    Custom Solana RPC URL? [Enter to skip]
+
+  Step 5/6: Peer off-ramp (optional)
+
+    Set up payment methods for P2P off-ramp on Base?
+    Supported: Venmo, Zelle, CashApp, Revolut
+    > y
+
+    Select platforms (1,2,3,4): 1,2
+    Venmo handle (@username or phone): @john-doe
+    Zelle handle (email or phone): john@citibank.com
+    ✓ Payment methods saved. Create deposits with: wallet deposit <amount>
+
+  Step 6/6: Verify
+
+    Running health check...
+    ✓ EVM signer: 0xDd10...e31B (WalletConnect)
+    ✓ Solana signer: 6MAC...N93D (browser)
+    ✓ Ethereum RPC: OK
+    ✓ Base RPC: OK
+    ✓ Solana RPC: OK
+    ✓ Uniswap API: configured
+    ✓ Etherscan API: configured
+    ✗ LI.FI API: skipped (default rate limit)
+    ✗ Spritz API: skipped (bank withdrawals disabled)
+    ✓ Peer: Venmo + Zelle configured
+
+    Setup complete! Run `wallet balance` to see your wallets.
+    Run `wallet audit` before your first mainnet transaction.
+```
+
+### Implementation
+
+1. **Interactive prompts** — readline-based (no new deps), same pattern as `deposit create`
+2. **Writes `.env`** — creates or updates `.env` file with keys/RPCs
+3. **Runs `wallet connect`** — triggers WC QR or browser pairing inline
+4. **Saves Peer config** — payment method handles stored in `~/.wallet-cli/peer-config.json` so deposit creation can pre-fill them
+5. **Runs `wallet health`** — final verification step
+6. **Idempotent** — can re-run to update individual settings without losing existing config
+
+### Subcommands
+
+```bash
+wallet setup              # full guided wizard
+wallet setup check        # just run the verification step (Step 6)
+wallet setup reset        # clear all config + .env (with confirmation)
+```
+
+### Pre-fill deposit creation
+
+After setup saves payment handles, `wallet deposit <amount>` can skip the interactive platform/handle prompts and just confirm:
+
+```
+$ wallet deposit 500 --run
+  Deposit: 500 USDC on Peer
+  Platforms: Venmo (@john-doe), Zelle (john@citibank.com)
+  Spread: 2.00%
+  Confirm? [y/N]
+```
+
+---
+
 ## Implementation Priority
 
 | # | Feature | Status | Priority |
 |---|---------|--------|----------|
 | 17 | Off-ramp (Spritz + Peer) | **DONE** — both providers implemented | High |
+| 20 | Guided Setup (`wallet setup`) | **TODO** — reduces onboarding friction | High |
 | 19 | MCP Server (AI agent + mobile remote control) | **NEXT** | High |
 | 14 | Encrypted keystore + signer abstraction | Signer + WC done, keystore TODO | High |
 | 15 | Fiat on-ramp/off-ramp + 2FA | TODO | Medium |

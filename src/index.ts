@@ -438,6 +438,7 @@ program
   .description('Manage P2P USDC deposits on Base via Peer')
   .addHelpText('after', `
   Usage:
+    deposit platforms                    Show supported payment methods + handle formats
     deposit <amount>                     Create a new USDC deposit (interactive — platforms, spreads)
     deposit list                         List active deposits
     deposit list closed                  List closed/withdrawn deposits
@@ -450,10 +451,11 @@ program
     deposit history                      Recent intents / buyer activity
 
   Peer: Decentralized P2P off-ramp on Base chain.
-  Deposit USDC as LP — buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
-  Non-custodial, no KYC. Requires EVM_PRIVATE_KEY (or WalletConnect) in .env.
+  You deposit USDC → buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
+  Non-custodial, no KYC. Requires an EVM signer (env key, WalletConnect, or browser).
 
   Examples:
+    wallet deposit platforms             See supported platforms + handle formats
     wallet deposit 500                   Create $500 deposit (select platforms + spread)
     wallet deposit list                  View active deposits table
     wallet deposit liquidity 100         Preview orderbook for $100
@@ -461,7 +463,10 @@ program
     wallet deposit close 42 --run        Close deposit #42
 `)
   .action(timed(async (args: string[]) => {
-    if (args[0] === 'list') {
+    if (args[0] === 'platforms') {
+      const { depositPlatformsCommand } = await import('./commands/deposit.js');
+      await depositPlatformsCommand();
+    } else if (args[0] === 'list') {
       const { depositListCommand } = await import('./commands/deposit.js');
       await depositListCommand(args[1] === 'closed');
     } else if (args[0] === 'liquidity' && args[1]) {
@@ -495,15 +500,16 @@ program
       const { depositCreateCommand } = await import('./commands/deposit.js');
       await depositCreateCommand(args[0], getDryRun(program));
     } else {
-      console.error('  Usage: wallet deposit <amount>');
-      console.error('         wallet deposit list [closed]');
-      console.error('         wallet deposit liquidity <amount>');
-      console.error('         wallet deposit add <depositId> <amount>');
-      console.error('         wallet deposit remove <depositId> <amount>');
-      console.error('         wallet deposit close <depositId>');
-      console.error('         wallet deposit pause|resume <depositId>');
-      console.error('         wallet deposit history');
-      console.error('         wallet deposit --help');
+      console.error('  Usage: wallet deposit platforms              Show supported payment methods');
+      console.error('         wallet deposit <amount>               Create a new deposit');
+      console.error('         wallet deposit list [closed]          List deposits');
+      console.error('         wallet deposit liquidity <amount>     Preview orderbook');
+      console.error('         wallet deposit add <id> <amount>      Add funds');
+      console.error('         wallet deposit remove <id> <amount>   Remove funds');
+      console.error('         wallet deposit close <id>             Close + withdraw');
+      console.error('         wallet deposit pause|resume <id>      Pause/resume');
+      console.error('         wallet deposit history                Buyer activity');
+      console.error('         wallet deposit --help                 Full help');
       process.exit(1);
     }
   }));

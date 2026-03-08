@@ -145,7 +145,7 @@ swap, bridge, buy, stake, unstake, zap support subcommands via `[args...]` varia
 | `wallet stake` | `history`, `--help` |
 | `wallet unstake` | `history`, `--help` |
 | `wallet zap` | `history`, `--help` |
-| `wallet deposit` | `list [closed]`, `liquidity <amt>`, `<amt>` (create), `add <id> <amt>`, `remove <id> <amt>`, `close <id>`, `pause <id>`, `resume <id>`, `history`, `--help` |
+| `wallet deposit` | `platforms`, `list [closed]`, `liquidity <amt>`, `<amt>` (create), `add <id> <amt>`, `remove <id> <amt>`, `close <id>`, `pause <id>`, `resume <id>`, `history`, `--help` |
 | `wallet withdraw` | `accounts`, `history`, `--help` |
 
 - `history` shows recent orders/transactions for that command
@@ -224,10 +224,11 @@ See `FEATURES-LIST.md` for the full feature roadmap with research notes and impl
 ### Pending Features (in priority order)
 
 5. **Off-ramp: Peer** — **DONE** — decentralized P2P off-ramp on Base. Deposit management (create, add/remove funds, close, pause/resume), liquidity preview, intent history. Payment methods: Venmo, Zelle, CashApp, Revolut. Non-custodial, no KYC/KYB. SDK: `@zkp2p/offramp-sdk`.
-6. **MCP Server** — **NEXT** — expose wallet-cli as an MCP tool server for AI agents (Claude Code, etc.). Remote control via WalletConnect for mobile signing. See FEATURES-LIST.md for full plan.
-7. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
-8. **Bill pay** — pay credit cards, mortgages, utilities via off-ramp provider (blocked on viable provider)
-9. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
+6. **Guided Setup** — **TODO** — `wallet setup` interactive wizard: signer config (env/WC/browser per chain), API keys (Uniswap, Etherscan, LI.FI, Spritz), RPCs, Peer payment handles. Reduces onboarding friction. See FEATURES-LIST.md Feature 20.
+7. **MCP Server** — **NEXT** — expose wallet-cli as an MCP tool server for AI agents (Claude Code, etc.). Remote control via WalletConnect for mobile signing. See FEATURES-LIST.md for full plan.
+8. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
+9. **Bill pay** — pay credit cards, mortgages, utilities via off-ramp provider (blocked on viable provider)
+10. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
 
 ## Environment Variables (.env)
 

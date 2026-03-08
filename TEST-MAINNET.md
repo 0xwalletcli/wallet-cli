@@ -388,54 +388,90 @@ wallet withdraw history
 
 ---
 
-## Phase 15b: P2P Deposit (Peer off-ramp on Base)
+## Phase 15b: P2P Off-ramp via Peer (sell USDC on Base, receive fiat)
 
-Requires an EVM signer (EVM_PRIVATE_KEY or WC_PROJECT_ID) and USDC on Base.
+Peer is a decentralized P2P off-ramp on Base. You deposit USDC into escrow,
+buyers pay you fiat (Venmo, Zelle, CashApp, Revolut), and the escrow releases
+USDC to them. You keep the fiat + your spread. No KYC, non-custodial.
+
+Requires an EVM signer (env key, WalletConnect, or browser) and USDC on Base.
+
+### Step 0: Discover supported platforms
 
 ```bash
-# 15b.1 — Bridge USDC to Base (if not already there)
+# 15b.0 — See all supported payment platforms + handle formats
+wallet deposit platforms
+```
+
+### Step 1: Get USDC onto Base
+
+```bash
+# 15b.1 — Bridge USDC from Ethereum to Base
 wallet bridge 10 usdc usdc-base --run
 
-# 15b.2 — Check USDC balance on Base
+# 15b.2 — Verify USDC arrived on Base
 wallet balance
+```
 
+### Step 2: Set up a deposit with Venmo + Zelle (Citi)
+
+```bash
 # 15b.3 — Create a deposit (dry-run — preview only)
 wallet deposit 5
 
 # 15b.4 — Create a deposit (execute — interactive flow)
 #          Select platforms: 1,2 (Venmo + Zelle)
-#          Enter handles: @your-venmo, your-email@bank.com
-#          Set spread: 2 (2%)
+#          Venmo handle:  @your-venmo-username
+#          Zelle handle:  your-email@citibank.com  (or phone registered with Citi)
+#          Spread:        2 (2% — buyer pays $5.10 for $5 USDC)
 wallet deposit 5 --run
 
-# 15b.5 — List active deposits
+# 15b.5 — List active deposits — verify it shows with both platforms
 wallet deposit list
 
-# 15b.6 — Preview orderbook (what buyers see)
+# 15b.6 — Preview orderbook — this is what buyers see on peer.xyz
 wallet deposit liquidity 5
+```
 
-# 15b.7 — Add funds to deposit
+### Step 3: Manage the deposit
+
+```bash
+# 15b.7 — Add more funds to the deposit
 wallet deposit add <depositId> 3 --run
 
-# 15b.8 — Remove funds from deposit
+# 15b.8 — Remove some funds
 wallet deposit remove <depositId> 2 --run
 
-# 15b.9 — Pause deposit (stop accepting buyers)
+# 15b.9 — Pause deposit (stop accepting buyers temporarily)
 wallet deposit pause <depositId> --run
 
 # 15b.10 — Resume deposit
 wallet deposit resume <depositId> --run
+```
 
-# 15b.11 — Check intent history
+### Step 4: Monitor + close
+
+```bash
+# 15b.11 — Check if any buyers have signaled intent / completed purchases
 wallet deposit history
 
-# 15b.12 — Close deposit (withdraw all remaining USDC)
+# 15b.12 — Close deposit (withdraw all remaining USDC back to your wallet)
 wallet deposit close <depositId> --run
 
 # 15b.13 — Verify closed
 wallet deposit list
 wallet deposit list closed
 ```
+
+### How you actually get paid
+
+Once your deposit is live, buyers find it on [peer.xyz](https://peer.xyz):
+1. Buyer selects your deposit and signals intent (locks USDC in escrow)
+2. Buyer sends you fiat via Venmo/Zelle/CashApp/Revolut
+3. Buyer proves payment with zkTLS → escrow releases USDC to buyer
+4. You receive fiat in your Venmo/Zelle account — done
+
+Monitor buyer activity with `wallet deposit history`.
 
 ---
 
@@ -578,18 +614,19 @@ wallet balance
 | 15.2 | Withdraw dry-run | free | [ ] |
 | 15.3 | Withdraw USDC to bank | ~$1 | [ ] |
 | 15.4 | Withdraw history | free | [ ] |
-| **Phase 15b — Deposit (Peer)** | | | |
+| **Phase 15b — P2P Off-ramp (Peer)** | | | |
+| 15b.0 | Discover platforms (`deposit platforms`) | free | [ ] |
 | 15b.1 | Bridge USDC to Base | ~$3 | [ ] |
 | 15b.2 | Balance check (Base USDC) | free | [ ] |
 | 15b.3 | Deposit dry-run | free | [ ] |
-| 15b.4 | Create deposit (interactive) | gas | [ ] |
+| 15b.4 | Create deposit (Venmo + Zelle Citi) | gas | [ ] |
 | 15b.5 | List active deposits | free | [ ] |
-| 15b.6 | Liquidity preview | free | [ ] |
+| 15b.6 | Liquidity preview (orderbook) | free | [ ] |
 | 15b.7 | Add funds to deposit | gas | [ ] |
 | 15b.8 | Remove funds from deposit | gas | [ ] |
 | 15b.9 | Pause deposit | gas | [ ] |
 | 15b.10 | Resume deposit | gas | [ ] |
-| 15b.11 | Deposit history | free | [ ] |
+| 15b.11 | Deposit history (buyer activity) | free | [ ] |
 | 15b.12 | Close deposit | gas | [ ] |
 | 15b.13 | Verify closed (list + list closed) | free | [ ] |
 | **Phase 16 — Send** | | | |

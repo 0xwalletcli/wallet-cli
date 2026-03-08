@@ -9,6 +9,45 @@ import { resolveSigner } from '../signers/index.js';
 import { formatToken } from '../lib/format.js';
 import { confirm, validateAmount, warnDryRun } from '../lib/prompt.js';
 
+// ── Supported platforms ─────────────────────────────────
+
+export async function depositPlatformsCommand() {
+  const { SUPPORTED_PLATFORMS, getPlatformLabel } = await import('../lib/peer.js');
+
+  console.log('  Supported payment platforms on Peer:\n');
+
+  const PLATFORM_DETAILS: Record<string, { handle: string; example: string }> = {
+    venmo: { handle: 'username or phone', example: '@john-doe or 555-123-4567' },
+    zelle: { handle: 'email or phone (registered with your bank)', example: 'you@citibank.com' },
+    cashapp: { handle: '$cashtag', example: '$johndoe' },
+    revolut: { handle: 'username or @tag', example: '@johndoe' },
+  };
+
+  console.log('  ┌─────────────────┬──────────────────────────────────────┬─────────────────────┐');
+  console.log('  │ Platform        │ Handle Format                        │ Example             │');
+  console.log('  ├─────────────────┼──────────────────────────────────────┼─────────────────────┤');
+
+  for (const p of SUPPORTED_PLATFORMS) {
+    const label = getPlatformLabel(p).padEnd(15);
+    const details = PLATFORM_DETAILS[p];
+    const handle = (details?.handle || '—').padEnd(36);
+    const example = (details?.example || '—').padEnd(19);
+    console.log(`  │ ${label} │ ${handle} │ ${example} │`);
+  }
+
+  console.log('  └─────────────────┴──────────────────────────────────────┴─────────────────────┘');
+  console.log('\n  How it works:');
+  console.log('    1. You deposit USDC into Peer escrow on Base');
+  console.log('    2. Buyers find your deposit on peer.xyz');
+  console.log('    3. Buyer pays you fiat via your selected platform(s)');
+  console.log('    4. Buyer proves payment with zkTLS → escrow releases USDC to buyer');
+  console.log('    5. You keep the fiat + your spread\n');
+  console.log('  Setup example:');
+  console.log('    wallet deposit 1000 --run     # select Venmo + Zelle, set 2% spread');
+  console.log('    wallet deposit list            # view your active deposits');
+  console.log('    wallet deposit liquidity 100   # see what buyers see\n');
+}
+
 // ── List deposits ───────────────────────────────────────
 
 export async function depositListCommand(showClosed = false) {
