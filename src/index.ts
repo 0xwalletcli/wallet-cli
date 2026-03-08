@@ -8,6 +8,7 @@ import './providers/swap/lifi.js';     // register LI.FI swap provider
 import './providers/bridge/debridge.js'; // register deBridge provider
 import './providers/bridge/lifi.js';   // register LI.FI bridge provider
 import './providers/offramp/spritz.js'; // register Spritz offramp provider
+import './providers/offramp/peer.js'; // register Peer offramp provider
 import { Command } from 'commander';
 import { type Network, HISTORY_LIMIT } from './config.js';
 import { checkAuditGate } from './lib/auditgate.js';
@@ -431,19 +432,97 @@ program
     await cancelCommand(orderId, getNetwork(program));
   }));
 
+// wallet deposit [args...] — Peer P2P deposit management on Base
+program
+  .command('deposit [args...]')
+  .description('Manage P2P USDC deposits on Base via Peer')
+  .addHelpText('after', `
+  Usage:
+    deposit <amount>                     Create a new USDC deposit (interactive — platforms, spreads)
+    deposit list                         List active deposits
+    deposit list closed                  List closed/withdrawn deposits
+    deposit add <depositId> <amount>     Add funds to existing deposit
+    deposit remove <depositId> <amount>  Remove funds from deposit
+    deposit close <depositId>            Fully withdraw a deposit
+    deposit pause <depositId>            Stop accepting new buyers
+    deposit resume <depositId>           Resume accepting buyers
+    deposit liquidity <amount>           Preview orderbook — what buyers see
+    deposit history                      Recent intents / buyer activity
+
+  Peer: Decentralized P2P off-ramp on Base chain.
+  Deposit USDC as LP — buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
+  Non-custodial, no KYC. Requires EVM_PRIVATE_KEY (or WalletConnect) in .env.
+
+  Examples:
+    wallet deposit 500                   Create $500 deposit (select platforms + spread)
+    wallet deposit list                  View active deposits table
+    wallet deposit liquidity 100         Preview orderbook for $100
+    wallet deposit add 42 200 --run      Add $200 to deposit #42
+    wallet deposit close 42 --run        Close deposit #42
+`)
+  .action(timed(async (args: string[]) => {
+    if (args[0] === 'list') {
+      const { depositListCommand } = await import('./commands/deposit.js');
+      await depositListCommand(args[1] === 'closed');
+    } else if (args[0] === 'liquidity' && args[1]) {
+      const { depositLiquidityCommand } = await import('./commands/deposit.js');
+      await depositLiquidityCommand(args[1]);
+    } else if (args[0] === 'history') {
+      const { depositHistoryCommand } = await import('./commands/deposit.js');
+      await depositHistoryCommand();
+    } else if (args[0] === 'add' && args[1] && args[2]) {
+      checkAuditGate(getNetwork(program), getDryRun(program));
+      const { depositAddFundsCommand } = await import('./commands/deposit.js');
+      await depositAddFundsCommand(args[1], args[2], getDryRun(program));
+    } else if (args[0] === 'remove' && args[1] && args[2]) {
+      checkAuditGate(getNetwork(program), getDryRun(program));
+      const { depositRemoveFundsCommand } = await import('./commands/deposit.js');
+      await depositRemoveFundsCommand(args[1], args[2], getDryRun(program));
+    } else if (args[0] === 'close' && args[1]) {
+      checkAuditGate(getNetwork(program), getDryRun(program));
+      const { depositCloseCommand } = await import('./commands/deposit.js');
+      await depositCloseCommand(args[1], getDryRun(program));
+    } else if (args[0] === 'pause' && args[1]) {
+      checkAuditGate(getNetwork(program), getDryRun(program));
+      const { depositPauseResumeCommand } = await import('./commands/deposit.js');
+      await depositPauseResumeCommand(args[1], false, getDryRun(program));
+    } else if (args[0] === 'resume' && args[1]) {
+      checkAuditGate(getNetwork(program), getDryRun(program));
+      const { depositPauseResumeCommand } = await import('./commands/deposit.js');
+      await depositPauseResumeCommand(args[1], true, getDryRun(program));
+    } else if (args.length === 1 && !isNaN(Number(args[0]))) {
+      checkAuditGate(getNetwork(program), getDryRun(program));
+      const { depositCreateCommand } = await import('./commands/deposit.js');
+      await depositCreateCommand(args[0], getDryRun(program));
+    } else {
+      console.error('  Usage: wallet deposit <amount>');
+      console.error('         wallet deposit list [closed]');
+      console.error('         wallet deposit liquidity <amount>');
+      console.error('         wallet deposit add <depositId> <amount>');
+      console.error('         wallet deposit remove <depositId> <amount>');
+      console.error('         wallet deposit close <depositId>');
+      console.error('         wallet deposit pause|resume <depositId>');
+      console.error('         wallet deposit history');
+      console.error('         wallet deposit --help');
+      process.exit(1);
+    }
+  }));
+
 // wallet withdraw [args...]
 program
   .command('withdraw [args...]')
-  .description('Withdraw USDC to bank account via off-ramp provider (e.g., withdraw 500)')
+  .description('Withdraw USDC to bank account via off-ramp provider')
   .addHelpText('after', `
   Usage:
     withdraw <amount>          Withdraw USDC to linked bank account
     withdraw accounts          List linked accounts from provider
     withdraw history           Recent withdrawals
 
-  Mainnet only. Configure provider: wallet config set offramp spritz
-  Providers: Spritz Finance (requires SPRITZ_API_KEY in .env)
-  More providers coming soon (Peer/ZKP2P, Transak, MoonPay).
+  Providers:
+    Spritz Finance  — USDC -> bank via ACH (requires SPRITZ_API_KEY)
+
+  Configure: wallet config set offramp spritz
+  For P2P off-ramp via Peer, use: wallet deposit --help
 
   Examples:
     wallet withdraw 500
@@ -458,7 +537,7 @@ program
     } else if (args[0] === 'accounts') {
       const { withdrawAccountsCommand } = await import('./commands/withdraw.js');
       await withdrawAccountsCommand();
-    } else if (args.length === 1) {
+    } else if (args.length === 1 && !isNaN(Number(args[0]))) {
       checkAuditGate(getNetwork(program), getDryRun(program));
       const { withdrawCommand } = await import('./commands/withdraw.js');
       await withdrawCommand(args[0], getNetwork(program), getDryRun(program));
@@ -467,6 +546,7 @@ program
       console.error('         wallet withdraw accounts');
       console.error('         wallet withdraw history');
       console.error('         wallet withdraw --help');
+      console.error('  For P2P deposits: wallet deposit --help');
       process.exit(1);
     }
   }));

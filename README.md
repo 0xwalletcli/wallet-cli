@@ -15,7 +15,7 @@ CLI tool for managing crypto without centralized exchanges.
 - **Transactions** history across Ethereum, Base, and Solana with clickable explorer links
 - **Wrap/Unwrap** native assets: ETH ↔ WETH, SOL ↔ WSOL
 - **Audit** all integrations before mainnet transactions (prices, pools, contracts, APIs)
-- **Withdraw** USDC to your bank account (off-ramp, multi-provider — no CEX)
+- **Withdraw** USDC to bank (Spritz) or via P2P off-ramp ([Peer](https://peer.xyz) (prev ZKP2P) — decentralized, non-custodial, no KYC, Base chain)
 - **Connect** MetaMask, Coinbase Wallet, Phantom (EVM via WalletConnect or browser extension; Solana via browser extension) — sign transactions without storing private keys
 - **Address book** for human-readable wallet names
 - **Price fallback** — CoinGecko primary, DeFi Llama fallback (never blocked by rate limits)
@@ -80,8 +80,9 @@ ETHERSCAN_API_KEY=               # Ethereum txs; Base txs require paid Etherscan
 UNISWAP_API_KEY=               # free key from https://developers.uniswap.org
 LIFI_API_KEY=                  # increases LI.FI rate limit (200 req/2hr → 200 req/min)
 
-# Off-ramp (withdraw USDC to bank — multi-provider, WIP)
+# Off-ramp (withdraw USDC to bank)
 SPRITZ_API_KEY=                # Spritz Finance: https://app.spritz.finance
+# Peer P2P off-ramp on Base requires an EVM signer (EVM_PRIVATE_KEY or WC_PROJECT_ID)
 ```
 
 ## Quick Start
@@ -237,21 +238,35 @@ wallet unstake claim steth --run
 wallet unstake 10 jitosol --run
 ```
 
-### 10. Withdraw USDC to bank (off-ramp)
+### 10. P2P deposits (Peer off-ramp on Base)
+
+Deposit USDC as LP — buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
 
 ```bash
-# List linked bank accounts
-wallet withdraw accounts
+# Create a deposit (interactive — pick payment methods + spread)
+wallet deposit 500
 
-# Withdraw USDC to your bank (dry-run first)
-wallet withdraw 500
-wallet withdraw 500 --run
-
-# Recent withdrawals
-wallet withdraw history
+# Manage deposits
+wallet deposit list                          # active deposits table
+wallet deposit list closed                   # closed deposits
+wallet deposit liquidity 100                 # preview orderbook for $100
+wallet deposit add 42 200 --run              # add $200 to deposit #42
+wallet deposit remove 42 100 --run           # remove $100 from deposit #42
+wallet deposit close 42 --run                # close + withdraw all funds
+wallet deposit pause 42 --run                # stop accepting buyers
+wallet deposit resume 42 --run               # resume
+wallet deposit history                       # recent intents
 ```
 
-### 11. Send to external wallets
+### 11. Withdraw USDC to bank (Spritz)
+
+```bash
+wallet withdraw accounts                     # list linked bank accounts
+wallet withdraw 500 --run                    # withdraw to bank
+wallet withdraw history                      # recent withdrawals
+```
+
+### 12. Send to external wallets
 
 ```bash
 wallet send 0.5 eth coinbase-eth --run
@@ -261,7 +276,7 @@ wallet send 5 sol coinbase-sol --run
 wallet send 10 sol phantom --run
 ```
 
-### 12. Review
+### 13. Review
 
 ```bash
 wallet balance                 # balances across Ethereum, Base, and Solana
@@ -273,7 +288,9 @@ wallet stake history           # recent staking transactions
 wallet unstake history         # recent unstakes + pending Lido withdrawals
 wallet zap history             # recent zap operations
 wallet buy history             # recent buy orders
-wallet withdraw history        # recent withdrawals
+wallet deposit list            # active Peer deposits
+wallet deposit history         # recent P2P intents
+wallet withdraw history        # recent bank withdrawals
 ```
 
 ## All Commands
@@ -310,7 +327,15 @@ wallet withdraw history        # recent withdrawals
 | `wallet tokens` | Show supported tokens, addresses, and explorer links |
 | `wallet mint <token> [amount]` | Get testnet tokens — `mint eth`, `mint usdc` (faucet links), `mint sol 2` (airdrop) |
 | `wallet approve <token> <spender> <amt>` | ERC-20 approval helper |
-| `wallet withdraw <amount>` | Withdraw USDC to bank account (off-ramp, multi-provider, mainnet only) |
+| `wallet deposit <amount>` | Create a new P2P deposit on Base (interactive — platforms, spreads) |
+| `wallet deposit list [closed]` | List active or closed Peer deposits |
+| `wallet deposit liquidity <amount>` | Preview P2P orderbook liquidity for an amount |
+| `wallet deposit add <id> <amount>` | Add funds to existing deposit |
+| `wallet deposit remove <id> <amount>` | Remove funds from deposit |
+| `wallet deposit close <id>` | Close deposit and withdraw all funds |
+| `wallet deposit pause/resume <id>` | Pause or resume accepting buyers |
+| `wallet deposit history` | Recent intents / buyer activity |
+| `wallet withdraw <amount>` | Withdraw USDC to bank account (Spritz, mainnet only) |
 | `wallet withdraw accounts` | List linked bank accounts |
 | `wallet withdraw history` | Recent withdrawals |
 | `wallet cancel [orderId]` | Cancel a pending CoW Swap order |
@@ -364,7 +389,7 @@ wallet withdraw history        # recent withdrawals
 ## Security
 
 - **Audit gate** — mainnet write commands are blocked unless a passing `wallet audit` has been run within the last 7 days. The audit verifies all integrated services, price sanity, pool health, stETH/ETH ratio, and USDC peg stability.
-- **Network egress guard** — all outbound connections are restricted to a whitelist of known hosts (RPCs, CoW, deBridge, Jupiter, Uniswap, LI.FI, Spritz, Peer/ZKP2P, CoinGecko, DeFi Llama). Even if an npm dependency is compromised, it cannot phone home with your keys.
+- **Network egress guard** — all outbound connections are restricted to a whitelist of known hosts (RPCs, CoW, deBridge, Jupiter, Uniswap, LI.FI, Spritz, Peer, CoinGecko, DeFi Llama). Even if an npm dependency is compromised, it cannot phone home with your keys.
 - **`child_process` disabled** — prevents subprocess-based exfiltration (`curl`, `wget`, etc.)
 - **UDP sockets blocked** — prevents DNS-tunneling exfiltration
 - **Install scripts disabled** (`.npmrc: ignore-scripts=true`) — prevents `postinstall` attacks
@@ -392,7 +417,7 @@ wallet withdraw history        # recent withdrawals
 | **Stake SOL** | Jito | SOL -> JitoSOL, liquid staking + MEV rewards (~7% APR) |
 | **Unstake ETH** | Lido | stETH -> request withdrawal (1-5 day queue) -> claim ETH |
 | **Unstake SOL** | Jito | JitoSOL -> SOL, instant via SPL stake pool |
-| **Withdraw** | Multi-provider | USDC -> fiat to bank account (off-ramp, configurable provider) |
+| **Withdraw** | Multi-provider | USDC -> fiat: Spritz (bank ACH) or Peer (P2P on Base — Venmo/Zelle/CashApp/Revolut) |
 | **Send** | Direct transfer | ETH/ERC-20 (Ethereum), ETH-BASE/USDC-BASE (Base), or SOL/SPL (Solana) to any address |
 | **Wrap/Unwrap** | WETH / WSOL | Native assets (ETH/SOL) to ERC-20/SPL equivalents and back |
 | **Zap** | Multi-platform | USDC -> stETH (swap+Lido) or USDC -> JitoSOL (bridge+Jito) |
@@ -412,7 +437,7 @@ Swap, bridge, and off-ramp protocols are pluggable providers behind a common int
 | **Bridge** | [deBridge](https://debridge.finance) | Cross-chain ETH/USDC/SOL both ways |
 | **Bridge** | [LI.FI/Jumper](https://li.fi) | Cross-chain bridge aggregator |
 | **Off-ramp** | [Spritz Finance](https://spritz.finance) | USDC -> bank account via ACH (US, mainnet only) |
-| **Off-ramp** | [Peer/ZKP2P](https://peer.xyz) | Decentralized P2P off-ramp via Zelle/Venmo (Base chain, coming soon) |
+| **Off-ramp** | [Peer](https://peer.xyz) | Decentralized P2P off-ramp on Base — Venmo, Zelle, CashApp, Revolut. Non-custodial, no KYC |
 
 Provider resolution order: `--route`/`--provider` flag > `wallet config` setting > `auto` (all providers).
 

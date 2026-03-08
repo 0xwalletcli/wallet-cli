@@ -26,7 +26,7 @@ const DEFAULTS: WalletConfig = {
 
 const VALID_SWAP_PROVIDERS = ['auto', 'cow', 'uniswap', 'lifi'];
 const VALID_BRIDGE_PROVIDERS = ['auto', 'debridge', 'lifi'];
-const VALID_OFFRAMP_PROVIDERS = ['auto', 'spritz'];
+const VALID_OFFRAMP_PROVIDERS = ['auto', 'spritz', 'peer'];
 const VALID_SIGNERS = ['env', 'wc', 'browser'];
 
 /** Normalize signer config — migrates legacy string to per-chain object */

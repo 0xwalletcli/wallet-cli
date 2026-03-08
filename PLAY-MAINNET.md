@@ -124,20 +124,40 @@ wallet zap history
 
 When you want to cash out:
 
-### Option A: Withdraw USDC directly to bank (off-ramp)
-
-No CEX needed — USDC goes straight to your linked bank account via configured off-ramp provider.
+### Option A: Withdraw via Spritz (USDC -> bank via ACH)
 
 ```bash
-# List linked bank accounts
+wallet config set offramp spritz
 wallet withdraw accounts
-
-# Withdraw USDC to bank (dry-run first)
 wallet withdraw 5000
 wallet withdraw 5000 --run
-
-# Check status
 wallet withdraw history
+```
+
+### Option A2: P2P off-ramp via Peer (decentralized, on Base)
+
+Deposit USDC as LP. Buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
+
+```bash
+# 1. Bridge USDC to Base (if not already there)
+wallet bridge 5000 usdc usdc-base --run
+
+# 2. Create a deposit — interactive flow picks payment methods + spread
+wallet deposit 5000
+
+# 3. Monitor your deposits
+wallet deposit list                         # active deposits table
+wallet deposit liquidity 100                # preview what buyers see
+
+# 4. Manage deposits
+wallet deposit add 42 1000 --run            # add more funds
+wallet deposit remove 42 500 --run          # remove excess
+wallet deposit pause 42 --run               # stop accepting buyers
+wallet deposit resume 42 --run              # resume
+wallet deposit close 42 --run               # close + withdraw all
+
+# 5. Check intent history
+wallet deposit history
 ```
 
 ### Option B: Unstake + send to Coinbase
@@ -214,7 +234,7 @@ wallet balance
 | USDC -> JitoSOL | deBridge/LI.FI/Jupiter + Jito (~7% APR) |
 | ETH/USDC -> Base | deBridge/LI.FI bridge (low-fee operations) |
 | Base swaps | LI.FI (ETH-BASE <-> USDC-BASE) |
-| USDC -> Bank (off-ramp) | Multi-provider: Spritz (ACH), Peer/ZKP2P (P2P, coming soon) |
+| USDC -> Bank (off-ramp) | Spritz (ACH) or Peer (P2P on Base — Venmo/Zelle/CashApp/Revolut) |
 
 ## Tips
 

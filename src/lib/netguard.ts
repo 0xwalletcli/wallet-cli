@@ -58,6 +58,10 @@ const ALLOWED_HOSTS = new Set([
   // Spritz Finance (off-ramp)
   'api.spritz.finance',
   'platform.spritz.finance',
+  // Peer (decentralized P2P off-ramp on Base)
+  'api.zkp2p.xyz',
+  'indexer.hyperindex.xyz',
+  'attestation-service.zkp2p.xyz',
   // WalletConnect relay
   'relay.walletconnect.com',
   // localhost (for dev/testing)

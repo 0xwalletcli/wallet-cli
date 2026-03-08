@@ -2,7 +2,7 @@ import { type Network, TOKENS, EXPLORERS } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getPublicClient, getWalletClient, getERC20Balance, waitForReceipt } from '../lib/evm.js';
 import { parseTokenAmount, formatToken, formatUSD } from '../lib/format.js';
-import { confirm, validateAmount, warnMainnet, warnDryRun } from '../lib/prompt.js';
+import { confirm, validateAmount, warnMainnet, warnDryRun, select } from '../lib/prompt.js';
 import { trackTx, clearTx } from '../lib/txtracker.js';
 import { BalanceTracker, evmTokens } from '../lib/balancedelta.js';
 import { resolveOfframpProvider } from '../lib/config.js';
@@ -21,7 +21,8 @@ function resolveProvider(providerFlag?: string): OfframpProvider {
   if (configured.length === 0) {
     console.error('  No offramp providers configured.');
     console.error('  Set SPRITZ_API_KEY in .env for Spritz Finance.');
-    console.error('  More providers coming soon (Peer/ZKP2P, Transak, MoonPay).');
+    console.error('  Set EVM_PRIVATE_KEY in .env for Peer.');
+    console.error('  For P2P deposits: wallet deposit --help');
     process.exit(1);
   }
   return configured[0];
@@ -43,12 +44,20 @@ export async function withdrawCommand(
 
   const provider = resolveProvider(providerFlag);
 
+  // Peer deposits are managed via `wallet deposit` command
+  if (provider.id === 'peer') {
+    console.error('  Peer uses P2P deposits, not direct withdrawals.');
+    console.error('  Use: wallet deposit <amount>    — create a deposit');
+    console.error('       wallet deposit list         — view deposits');
+    console.error('       wallet deposit --help       — all deposit commands\n');
+    return;
+  }
+
   if (dryRun) warnDryRun();
   console.log(`  Withdraw: ${amountStr} USDC -> bank account via ${provider.displayName}`);
   console.log(`  Chain: Ethereum ${network}`);
   warnMainnet(network, dryRun);
 
-  // Get signer + check balance
   const signer = await resolveSigner();
   const account = await signer.getEvmAccount();
   const tokens = TOKENS[network];
@@ -57,7 +66,6 @@ export async function withdrawCommand(
   console.log(`  From: ${account.address}`);
   console.log('  Fetching accounts...');
 
-  // List accounts and let user pick
   const accounts = await provider.listAccounts();
   if (!accounts || accounts.length === 0) {
     console.error(`  No accounts linked in ${provider.displayName}. Set up your account with the provider first.`);
@@ -73,7 +81,6 @@ export async function withdrawCommand(
 
   let selectedAccount = accounts[0];
   if (accounts.length > 1) {
-    const { select } = await import('../lib/prompt.js');
     const choice = await select('Select account', accounts.length);
     if (choice === 0) {
       console.log('  Cancelled.\n');

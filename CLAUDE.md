@@ -98,7 +98,8 @@ src/
     tokens.ts           — supported token reference (addresses, decimals, explorer links, includes WSOL)
     health.ts           — service status dashboard (RPCs, APIs, staking APR/APY, prices)
     mint.ts             — testnet faucet (SOL airdrop programmatic, ETH/USDC print URLs)
-    withdraw.ts         — withdraw USDC to bank via off-ramp provider (multi-provider, Ethereum mainnet only) + accounts/history subcommands
+    deposit.ts          — Peer P2P deposit management on Base. Subcommands: list [closed], liquidity <amt>, <amt> (create), add/remove/close/pause/resume <id>, history
+    withdraw.ts         — withdraw USDC to bank via off-ramp (Spritz). Subcommands: accounts, history
     cancel.ts           — cancel pending CoW Swap orders
     address.ts          — address book management
   providers/
@@ -112,7 +113,8 @@ src/
       debridge.ts       — deBridge provider: KNOWN_DLN_CONTRACTS, quote/create-tx, poll fulfillment, history/status
       lifi.ts           — LI.FI/Jumper bridge provider: cross-chain via aggregated bridges, poll via /status
     offramp/
-      spritz.ts         — Spritz Finance off-ramp provider: USDC -> bank via ACH (WIP, account disabled — finding alternatives)
+      spritz.ts         — Spritz Finance off-ramp provider: USDC -> bank via ACH (WIP, account disabled)
+      peer.ts           — Peer off-ramp provider: decentralized P2P on Base. Deposit management (create, add/remove funds, close, pause/resume), liquidity preview, intent history. Non-custodial, no KYC.
   lib/
     prices.ts           — shared price fetcher: CoinGecko primary + DeFi Llama fallback. Used by balance, value, quote, zap, health.
     jupiter.ts          — shared Jupiter API helpers: getJupiterQuote(), buildAndSendJupiterSwap(), getJupiterHistory(), mint/decimals lookup
@@ -127,6 +129,7 @@ src/
     prompt.ts           — confirm(), validateAmount(), warnMainnet(), warnDryRun(), select() for provider selection
     config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider, offrampProvider, per-chain signer (SignerConfig { evm, solana })
     spritz.ts           — Spritz Finance API client: payment requests, web3 tx params, bank account listing, payment history
+    peer.ts             — Peer SDK wrapper: Zkp2pClient singleton, Base USDC helpers, payment platform config, spread/rate conversion
     addressbook.ts      — JSON-file address book (~/.wallet-cli/addresses.json)
 ```
 
@@ -142,6 +145,7 @@ swap, bridge, buy, stake, unstake, zap support subcommands via `[args...]` varia
 | `wallet stake` | `history`, `--help` |
 | `wallet unstake` | `history`, `--help` |
 | `wallet zap` | `history`, `--help` |
+| `wallet deposit` | `list [closed]`, `liquidity <amt>`, `<amt>` (create), `add <id> <amt>`, `remove <id> <amt>`, `close <id>`, `pause <id>`, `resume <id>`, `history`, `--help` |
 | `wallet withdraw` | `accounts`, `history`, `--help` |
 
 - `history` shows recent orders/transactions for that command
@@ -174,7 +178,7 @@ Override with `EVM_RPC_URL`, `BASE_RPC_URL`, and `SOLANA_RPC_URL` env vars.
 - Uniswap: works on both mainnet and Sepolia, requires UNISWAP_API_KEY
 - LI.FI/Jumper: swap (same-chain, Ethereum + Base) and bridge (cross-chain), sell-only (no ExactOutput/buy orders)
 - Base chain: same EVM wallet address as Ethereum, chain IDs 8453 (mainnet) / 84532 (testnet). Tokens: ETH-BASE (native), USDC-BASE. Swaps via LI.FI, bridges via deBridge/LI.FI
-- Off-ramp (multi-provider, WIP): Spritz Finance (mainnet, US, SPRITZ_API_KEY), Peer/ZKP2P (next, Base chain, decentralized P2P)
+- Off-ramp (multi-provider): Spritz Finance (mainnet, US, SPRITZ_API_KEY), Peer (Base chain, decentralized P2P, EVM signer required)
 - Audit gate: mainnet write commands require a passing audit within 7 days
 
 ## UX Patterns
@@ -219,10 +223,11 @@ See `FEATURES-LIST.md` for the full feature roadmap with research notes and impl
 
 ### Pending Features (in priority order)
 
-5. **Off-ramp: Peer/ZKP2P** — **NEXT** — off-ramp provider (decentralized P2P, non-custodial, no KYB, Base chain). Architecture ready, needs SDK integration. Base chain support now complete.
-6. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
-7. **Bill pay** — pay credit cards, mortgages, utilities via off-ramp provider (blocked on viable provider)
-8. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
+5. **Off-ramp: Peer** — **DONE** — decentralized P2P off-ramp on Base. Deposit management (create, add/remove funds, close, pause/resume), liquidity preview, intent history. Payment methods: Venmo, Zelle, CashApp, Revolut. Non-custodial, no KYC/KYB. SDK: `@zkp2p/offramp-sdk`.
+6. **MCP Server** — **NEXT** — expose wallet-cli as an MCP tool server for AI agents (Claude Code, etc.). Remote control via WalletConnect for mobile signing. See FEATURES-LIST.md for full plan.
+7. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
+8. **Bill pay** — pay credit cards, mortgages, utilities via off-ramp provider (blocked on viable provider)
+9. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
 
 ## Environment Variables (.env)
 

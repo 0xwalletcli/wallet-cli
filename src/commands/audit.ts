@@ -25,6 +25,9 @@ const REQUIRED_HOSTS = [
   'li.quest',
   'api.spritz.finance',
   'base.blockscout.com',
+  'api.zkp2p.xyz',
+  'indexer.hyperindex.xyz',
+  'attestation-service.zkp2p.xyz',
 ];
 
 // minimum pool sizes to consider healthy
@@ -274,12 +277,13 @@ export async function auditCommand(network: Network) {
   const uniswapApiKey = process.env.UNISWAP_API_KEY;
 
   const spritzApiKey = process.env.SPRITZ_API_KEY;
+  const peerConfigured = !!(process.env.EVM_PRIVATE_KEY || process.env.WC_PROJECT_ID);
 
   const [
     evmBlock, baseBlock, solSlot, marketPrices,
     cowEth, cowWsol, jupSol, deBridgeSol,
     deBridgeStatus, etherscanCheck, blockscoutCheck, stethRatio, lidoSupply, jitoPool,
-    uniswapCheck, lifiCheck, spritzCheck,
+    uniswapCheck, lifiCheck, spritzCheck, peerCheck,
   ] = await Promise.allSettled([
     // Infrastructure
     withTimeout(client.getBlockNumber(), TIMEOUT).then(block => ({ block, ms: Date.now() - evmStart })),
@@ -387,6 +391,13 @@ export async function auditCommand(network: Network) {
       const client = getSpritzClient();
       const accounts = await withTimeout(client.bankAccount.list(), TIMEOUT);
       return { ms: Date.now() - start, accounts: accounts.length };
+    })() : Promise.resolve(null),
+    // Peer API (P2P off-ramp on Base)
+    peerConfigured ? (async () => {
+      const start = Date.now();
+      const res = await withTimeout(fetch('https://api.zkp2p.xyz/v1/health'), TIMEOUT);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return { ms: Date.now() - start };
     })() : Promise.resolve(null),
   ]);
 
@@ -623,6 +634,25 @@ export async function auditCommand(network: Network) {
   } else {
     printCheck('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
     record('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
+  }
+
+  // Peer (P2P off-ramp)
+  console.log(`\n  ── Peer (Off-ramp) ${SEP}`);
+
+  if (!peerConfigured) {
+    printCheck('Peer API', 'warn', 'No EVM signer configured (P2P off-ramp unavailable)');
+    record('Peer API', 'warn', 'No signer configured');
+  } else if (peerCheck.status === 'fulfilled') {
+    if (peerCheck.value == null) {
+      printCheck('Peer API', 'warn', 'Skipped (no signer)');
+      record('Peer API', 'warn', 'Skipped');
+    } else {
+      printCheck('Peer API', 'ok', `OK (${peerCheck.value.ms}ms)`);
+      record('Peer API', 'ok', `OK (${peerCheck.value.ms}ms)`);
+    }
+  } else {
+    printCheck('Peer API', 'fail', peerCheck.reason?.message || 'failed');
+    record('Peer API', 'fail', peerCheck.reason?.message || 'failed');
   }
 
   // Cross-platform comparison

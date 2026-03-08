@@ -388,6 +388,57 @@ wallet withdraw history
 
 ---
 
+## Phase 15b: P2P Deposit (Peer off-ramp on Base)
+
+Requires an EVM signer (EVM_PRIVATE_KEY or WC_PROJECT_ID) and USDC on Base.
+
+```bash
+# 15b.1 — Bridge USDC to Base (if not already there)
+wallet bridge 10 usdc usdc-base --run
+
+# 15b.2 — Check USDC balance on Base
+wallet balance
+
+# 15b.3 — Create a deposit (dry-run — preview only)
+wallet deposit 5
+
+# 15b.4 — Create a deposit (execute — interactive flow)
+#          Select platforms: 1,2 (Venmo + Zelle)
+#          Enter handles: @your-venmo, your-email@bank.com
+#          Set spread: 2 (2%)
+wallet deposit 5 --run
+
+# 15b.5 — List active deposits
+wallet deposit list
+
+# 15b.6 — Preview orderbook (what buyers see)
+wallet deposit liquidity 5
+
+# 15b.7 — Add funds to deposit
+wallet deposit add <depositId> 3 --run
+
+# 15b.8 — Remove funds from deposit
+wallet deposit remove <depositId> 2 --run
+
+# 15b.9 — Pause deposit (stop accepting buyers)
+wallet deposit pause <depositId> --run
+
+# 15b.10 — Resume deposit
+wallet deposit resume <depositId> --run
+
+# 15b.11 — Check intent history
+wallet deposit history
+
+# 15b.12 — Close deposit (withdraw all remaining USDC)
+wallet deposit close <depositId> --run
+
+# 15b.13 — Verify closed
+wallet deposit list
+wallet deposit list closed
+```
+
+---
+
 ## Phase 16: Send
 
 ```bash
@@ -413,6 +464,8 @@ wallet bridge history
 wallet stake history
 wallet unstake history
 wallet zap history
+wallet deposit list
+wallet deposit history
 wallet withdraw history
 wallet txs --limit 20
 
@@ -447,6 +500,8 @@ wallet balance
 | Bridge SOL -> ETH | Reverse direction | `wallet bridge 0.01 sol eth --run` |
 | Swap WSOL-ETH | Need to buy WSOL-ETH first | `wallet buy 0.5 wsol-eth --run` then `wallet swap 0.5 wsol-eth eth --run` |
 | Send USDC (ERC-20 transfer) | Same as send ETH, just ERC-20 | `wallet send 1 usdc <address> --run` |
+| Deposit with all 4 platforms | Need handles for all | `wallet deposit 10 --run` select 1,2,3,4 |
+| Deposit buyer intent | Need a buyer on peer.xyz | Wait for buyer activity, check `wallet deposit history` |
 
 ---
 
@@ -523,6 +578,20 @@ wallet balance
 | 15.2 | Withdraw dry-run | free | [ ] |
 | 15.3 | Withdraw USDC to bank | ~$1 | [ ] |
 | 15.4 | Withdraw history | free | [ ] |
+| **Phase 15b — Deposit (Peer)** | | | |
+| 15b.1 | Bridge USDC to Base | ~$3 | [ ] |
+| 15b.2 | Balance check (Base USDC) | free | [ ] |
+| 15b.3 | Deposit dry-run | free | [ ] |
+| 15b.4 | Create deposit (interactive) | gas | [ ] |
+| 15b.5 | List active deposits | free | [ ] |
+| 15b.6 | Liquidity preview | free | [ ] |
+| 15b.7 | Add funds to deposit | gas | [ ] |
+| 15b.8 | Remove funds from deposit | gas | [ ] |
+| 15b.9 | Pause deposit | gas | [ ] |
+| 15b.10 | Resume deposit | gas | [ ] |
+| 15b.11 | Deposit history | free | [ ] |
+| 15b.12 | Close deposit | gas | [ ] |
+| 15b.13 | Verify closed (list + list closed) | free | [ ] |
 | **Phase 16 — Send** | | | |
 | 16.1 | Send ETH | gas | [ ] |
 | 16.2 | Send SOL | gas | [ ] |

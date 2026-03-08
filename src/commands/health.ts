@@ -217,6 +217,18 @@ async function checkSpritz(): Promise<CheckResult> {
   }
 }
 
+async function checkPeer(): Promise<CheckResult> {
+  const start = Date.now();
+  try {
+    const res = await withTimeout(fetch('https://api.zkp2p.xyz/v1/health'), TIMEOUT);
+    const latency = Date.now() - start;
+    if (!res.ok) return { status: 'DOWN', detail: `HTTP ${res.status}`, latency };
+    return { status: latency > 2000 ? 'SLOW' : 'OK', latency };
+  } catch {
+    return { status: 'DOWN', latency: Date.now() - start };
+  }
+}
+
 async function checkJupiter(): Promise<CheckResult> {
   const start = Date.now();
   try {
@@ -393,7 +405,7 @@ export async function healthCommand() {
   console.log('  Checking services...\n');
 
   // Run all checks in parallel
-  const [evmMain, evmTest, baseMain, baseTest, solMain, solTest, cow, uniswap, lifi, debridge, jupiter, etherscan, spritz, lido, jito, market, swapPrices, bridgePrices, jupSol, lidoApr, jitoApy] =
+  const [evmMain, evmTest, baseMain, baseTest, solMain, solTest, cow, uniswap, lifi, debridge, jupiter, etherscan, spritz, peer, lido, jito, market, swapPrices, bridgePrices, jupSol, lidoApr, jitoApy] =
     await Promise.all([
       checkEvmRpc('mainnet'),
       checkEvmRpc('testnet'),
@@ -408,6 +420,7 @@ export async function healthCommand() {
       checkJupiter(),
       checkEtherscan(),
       checkSpritz(),
+      checkPeer(),
       checkLido(),
       checkJito(),
       getMarketPrices(),
@@ -433,6 +446,7 @@ export async function healthCommand() {
     { label: 'Jupiter', result: jupiter },
     { label: 'Etherscan', result: etherscan },
     { label: 'Spritz (off-ramp)', result: spritz },
+    { label: 'Peer (off-ramp)', result: peer },
     { label: 'Lido (stETH)', result: lido, extra: lido.status !== 'DOWN' && lidoApr != null ? `APR ${lidoApr.toFixed(2)}%` : undefined },
     { label: 'Jito (JitoSOL)', result: jito, extra: jito.status !== 'DOWN' && jitoApy != null ? `APY ${(jitoApy * 100).toFixed(2)}%` : undefined },
   ];

@@ -21,7 +21,7 @@ Goal: Make wallet-cli the one-stop-shop for all personal finance needs.
 - **Feature 11: Value Command** — `wallet value <amount> <token> [target]` shows USD value of any managed asset + cross-token conversion (e.g., `value 10000 usdc eth`). Staked assets resolve through base token: stETH -> ETH -> USD (rate from Lido contract `getPooledEthByShares`), JitoSOL -> SOL -> USD (rate from Jito stake pool). Supports: eth, weth, sol, wsol, wsol-eth, usdc, steth, jitosol.
 - **Feature 12: Price Fallback** — shared `src/lib/prices.ts` with CoinGecko primary + DeFi Llama fallback. All price-dependent commands (balance, value, quote, zap, health) use `fetchPrices()`. Never blocked by CoinGecko 429 rate limits. `coins.llama.fi` added to netguard allowlist.
 - **Feature 13: History Polish** — all history commands: compact single-line table format, parallel fetch (EVM + Solana via `Promise.allSettled`), clickable shortened IDs/tx hashes (OSC 8 terminal hyperlinks via `link()`/`txLink()` in format.ts), amounts displayed for all operations (Solana: parsed from pre/post balances; ETH unstake: decoded from calldata + internal txs), aligned fixed-width columns, configurable limit (`HISTORY_LIMIT` in config.ts). Bridge status normalization via STATUS_MAP (raw API states -> short display names). Solana txs resolve known token mints (USDC, JitoSOL, WSOL) instead of showing generic "SPL".
-- **Feature 17: Off-Ramp (Multi-Provider)** — `wallet withdraw <amount>` sends USDC to fiat via configurable off-ramp providers. `OfframpProvider` interface in `src/providers/types.ts`, registry in `src/providers/registry.ts`, auto-registration via side-effect imports. Pin provider: `wallet config set offramp spritz` or auto-detect first configured provider. Subcommands: `withdraw accounts`, `withdraw history`. Current providers: Spritz Finance (WIP — account issues). Next provider: Peer/ZKP2P (decentralized, non-custodial). Mainnet only.
+- **Feature 17: Off-Ramp (Multi-Provider)** — `wallet withdraw <amount>` sends USDC to fiat via configurable off-ramp providers. `OfframpProvider` interface in `src/providers/types.ts`, registry in `src/providers/registry.ts`, auto-registration via side-effect imports. Pin provider: `wallet config set offramp spritz|peer` or auto-detect first configured provider. Subcommands: `withdraw deposits [closed]`, `withdraw liquidity <amt>`, `withdraw deposit <amt>`, `withdraw add/remove/close/pause/resume <id>`, `withdraw accounts`, `withdraw history`. Providers: Spritz Finance (USDC->bank via ACH), **Peer** (decentralized P2P on Base — Venmo, Zelle, CashApp, Revolut — non-custodial, no KYC/KYB, `@zkp2p/offramp-sdk`). Mainnet only.
 - **Feature 18: Base Chain Support** — Full Base L2 support across all commands. Tokens: `ETH-BASE` (native ETH on Base), `USDC-BASE` (USDC on Base). Commands updated: balance (Base section), send (ETH-BASE/USDC-BASE), swap (same-chain Base swaps via LI.FI), bridge (Ethereum↔Base, Base↔Solana via deBridge/LI.FI), transactions (Base tx history via Etherscan V2), health (Base RPC checks), tokens (Base token listing), value (eth-base/usdc-base pricing), audit (Base RPC audit), buy (redirection to bridge/swap). Config: `EvmChain` type (`'ethereum' | 'base'`), per-chain EVM client caching, `BASE_CHAINS` (mainnet 8453, testnet 84532 Base Sepolia), `BASE_TOKENS`, `BASESCAN_CHAIN_ID`, Base in `EXPLORERS`. WalletConnect includes `eip155:8453`/`eip155:84532`. Base RPC: `base-rpc.publicnode.com` (mainnet), `base-sepolia-rpc.publicnode.com` (testnet). Override with `BASE_RPC_URL` env var.
 
 ---
@@ -131,17 +131,24 @@ Add `api.developer.coinbase.com`, `global.transak.com`, `api.moonpay.com` to `AL
 
 ## Feature 17: Off-Ramp (Multi-Provider Architecture)
 
-**Status:** WIP — Architecture done, finding viable providers.
+**Status:** DONE — Spritz + Peer implemented.
 **Priority:** High (core personal utility)
 **Complexity:** Medium
 
 ### Goal
 
 ```
-wallet withdraw 500                    # off-ramp USDC to bank via configured provider
-wallet withdraw accounts               # list linked accounts
-wallet withdraw history                # past withdrawals
-wallet config set offramp spritz       # pin a specific provider
+wallet withdraw 500                    # off-ramp USDC to bank (Spritz) or create P2P deposit (Peer)
+wallet withdraw deposits               # list active Peer deposits
+wallet withdraw liquidity 100          # preview P2P orderbook
+wallet withdraw deposit 500            # create deposit (interactive — platforms, spreads)
+wallet withdraw add 42 200             # add funds to deposit
+wallet withdraw remove 42 100          # remove funds from deposit
+wallet withdraw close 42               # close + withdraw all
+wallet withdraw pause/resume 42        # toggle buyer acceptance
+wallet withdraw accounts               # list linked accounts / active deposits
+wallet withdraw history                # past withdrawals / intents
+wallet config set offramp spritz|peer  # pin a specific provider
 ```
 
 ### Architecture (DONE)
@@ -158,41 +165,40 @@ Multi-provider off-ramp using `OfframpProvider` interface (same pattern as swap/
 | Provider | Status | Type | Fees | KYB? | 1099-DA? |
 |----------|--------|------|------|------|----------|
 | **Spritz Finance** | Implemented but account disabled | Custodial | ~1% | No (individual) | Yes >$10K |
-| **Peer/ZKP2P** | NEXT — research complete | Decentralized, non-custodial | 0% (0.5% bridge) | No | No |
+| **Peer** | **DONE** | Decentralized, non-custodial | 0% (0.5% bridge) | No | No |
 | **Transak** | Researched | Custodial (widget) | ~1% | Yes (KYB) | Yes >$10K |
 | **MoonPay** | Researched | Custodial (widget) | 1-4.5% | Yes (KYB) | Yes >$10K |
 | **Bridge.xyz** | Researched | Custodial (pure API) | Custom | Yes (KYB) | Yes >$10K |
 
-### Next Provider: Peer/ZKP2P (peer.xyz)
+### Peer (peer.xyz) — DONE
 
 Decentralized P2P off-ramp using zero-knowledge proofs. Non-custodial, no KYC/KYB, no broker reporting.
 
 **How it works:**
-1. Deposit USDC into ZKP2P vault contract (on Base)
-2. Set exchange rate + payment method (Venmo, Zelle, CashApp, PayPal, Revolut, Wise)
+1. Deposit USDC into Peer escrow contract (on Base)
+2. Set exchange rate (spread %) + payment methods (Venmo, Zelle, CashApp, Revolut)
 3. Buyer sends fiat via chosen payment app
 4. Buyer proves payment with ZK proof (zkTLS)
 5. Smart contract releases USDC to buyer
 
-**Integration approach:**
-- SDK: `@zkp2p/sdk` (browser extension based, onramp SDK exists)
-- Contracts: `github.com/zkp2p/zkp2p-contracts` (V2 escrow on Base)
-- Would need to bridge USDC from Ethereum → Base first
-- LP model (deposit + wait for buyers), not instant off-ramp
-- Docs: https://docs.peer.xyz
-
-**Challenges:**
-- On Base (not Ethereum mainnet) — requires bridge step
-- LP model, not instant — user deposits and waits for buyers
-- Fiat arrives via Venmo/Zelle, not direct ACH
-- No headless off-ramp API yet (SDK covers onramp only)
+**Implementation:**
+- SDK: `@zkp2p/offramp-sdk` (Zkp2pClient — deposit management, quotes, intents)
+- Contracts: `@zkp2p/contracts-v2` (V2 escrow on Base)
+- Provider: `src/providers/offramp/peer.ts` (OfframpProvider + deposit lifecycle functions)
+- Lib: `src/lib/peer.ts` (SDK wrapper, Base USDC helpers, spread/rate conversion)
+- Env: EVM signer required (EVM_PRIVATE_KEY or WC_PROJECT_ID)
+- Netguard hosts: `api.zkp2p.xyz`, `indexer.hyperindex.xyz`, `attestation-service.zkp2p.xyz`
+- Commands: `withdraw deposit/deposits/liquidity/add/remove/close/pause/resume`
+- Payment methods: Venmo, Zelle (any bank), CashApp, Revolut
+- Deposit creation is interactive: select platforms → enter handles → set spread
+- USDC must be on Base (bridge from Ethereum first: `wallet bridge <amt> usdc usdc-base`)
 
 ### Tax Context
 
 - Any custodial provider is a "broker" under IRS 1099-DA rules (starting 2025)
 - **De minimis exemption:** Brokers can skip reporting if qualifying stablecoin sales < $10K/year per broker
 - USDC → USD is $0 gain regardless — 1099-DA is paperwork, not tax liability
-- Only truly decentralized protocols (ZKP2P) avoid broker classification
+- Only truly decentralized protocols (Peer) avoid broker classification
 
 ### Bill Pay (Future)
 
@@ -200,8 +206,177 @@ Spritz also supports bill pay (credit cards, mortgages, utilities via Plaid). Th
 
 ### Netguard
 
-Current: `api.spritz.finance`, `platform.spritz.finance`
-Future: ZKP2P contract calls go through existing Base/Ethereum RPC (no new hosts needed)
+Current: `api.spritz.finance`, `platform.spritz.finance`, `api.zkp2p.xyz`, `indexer.hyperindex.xyz`, `attestation-service.zkp2p.xyz`
+
+---
+
+## Feature 19: MCP Server (AI Agent + Mobile Remote Control)
+
+**Status:** NEXT — planning complete
+**Priority:** High (unlocks AI-powered wallet management + mobile signing)
+**Complexity:** Medium-High
+
+### Goal
+
+Expose wallet-cli as a Model Context Protocol (MCP) tool server so AI agents (Claude Code, Cursor, any MCP client) can manage DeFi operations programmatically. Extend with remote control for mobile wallet signing.
+
+```
+# Use wallet-cli from Claude Code (or any MCP-compatible AI)
+> "Check my balances across all chains"
+> "Swap 100 USDC to ETH on mainnet"
+> "Create a Peer deposit for 500 USDC with Venmo and Zelle at 2% spread"
+> "Show me the best staking yield paths for 10,000 USDC"
+
+# Mobile remote control
+wallet connect mobile                  # generates QR / deep link
+                                       # mobile wallet signs txs remotely
+```
+
+### Phase 1: MCP Tool Server (Core)
+
+Expose wallet-cli commands as MCP tools that AI agents can call.
+
+**Architecture:**
+```
+┌──────────────────┐     MCP (stdio/SSE)     ┌──────────────────┐
+│  Claude Code     │ ◄──────────────────────► │  wallet-cli MCP  │
+│  (or any AI)     │                          │  server          │
+└──────────────────┘                          └───────┬──────────┘
+                                                      │
+                                              ┌───────▼──────────┐
+                                              │  wallet-cli core │
+                                              │  (existing code) │
+                                              └──────────────────┘
+```
+
+**MCP Tools to expose:**
+
+| Tool | Description | Read/Write |
+|------|-------------|------------|
+| `wallet_balance` | Get balances across all chains | Read |
+| `wallet_value` | Get USD value of tokens | Read |
+| `wallet_health` | Check service status | Read |
+| `wallet_audit` | Run security audit | Read |
+| `wallet_txs` | Transaction history | Read |
+| `wallet_tokens` | Supported tokens list | Read |
+| `wallet_quote` | Compare DeFi paths | Read |
+| `wallet_swap` | Swap tokens (requires confirmation) | Write |
+| `wallet_bridge` | Bridge cross-chain (requires confirmation) | Write |
+| `wallet_send` | Send tokens (requires confirmation) | Write |
+| `wallet_stake` | Stake ETH/SOL (requires confirmation) | Write |
+| `wallet_unstake` | Unstake (requires confirmation) | Write |
+| `wallet_zap` | One-step USDC -> staked asset (requires confirmation) | Write |
+| `wallet_withdraw` | Off-ramp / deposit management (requires confirmation) | Write |
+| `wallet_deposits` | List Peer deposits | Read |
+| `wallet_liquidity` | Preview P2P orderbook | Read |
+| `wallet_config` | View/set config | Read/Write |
+
+**Safety model:**
+- Read tools: no confirmation needed, return data directly
+- Write tools: return preview first (dry-run), require explicit confirmation tool call to execute
+- All write tools honor the existing audit gate (mainnet blocked if stale >7 days)
+- Network operations: same netguard protection applies
+
+**Implementation:**
+- New file: `src/mcp/server.ts` — MCP server using `@anthropic-ai/sdk` or `@modelcontextprotocol/sdk`
+- New file: `src/mcp/tools.ts` — tool definitions (name, description, input schema, handler)
+- Entry point: `wallet mcp` command starts the MCP server (stdio transport for Claude Code)
+- SSE transport option for remote/web clients: `wallet mcp --transport sse --port 8765`
+- Each tool handler calls existing command functions (reuse, don't duplicate)
+- Tool results return structured JSON (not console.log output)
+
+**MCP Resources to expose:**
+- `wallet://config` — current CLI configuration
+- `wallet://balances` — live balance snapshot
+- `wallet://deposits` — active Peer deposits
+
+**Configuration (Claude Code):**
+```json
+// .claude/settings.json or claude_desktop_config.json
+{
+  "mcpServers": {
+    "wallet": {
+      "command": "wallet",
+      "args": ["mcp"],
+      "env": {
+        "EVM_PRIVATE_KEY": "...",
+        "EVM_PRIVATE_KEY": "..."
+      }
+    }
+  }
+}
+```
+
+### Phase 2: Remote Control (Mobile Signing)
+
+Enable mobile wallet signing for MCP-initiated transactions via WalletConnect relay.
+
+**Architecture:**
+```
+┌──────────────┐     MCP      ┌──────────────┐     WC Relay     ┌──────────────┐
+│  Claude Code │ ◄───────────► │  wallet-cli  │ ◄──────────────► │  Mobile App  │
+│  (AI agent)  │              │  MCP server  │                  │  (MetaMask)  │
+└──────────────┘              └──────────────┘                  └──────────────┘
+```
+
+**Flow:**
+1. `wallet connect mobile` — establishes persistent WalletConnect session with mobile wallet
+2. AI agent calls `wallet_swap` tool via MCP
+3. MCP server builds the transaction, returns preview to AI
+4. AI confirms, MCP server sends tx signing request to mobile via WC relay
+5. User approves on phone → tx signed and broadcast
+6. MCP server returns result to AI agent
+
+**Why this works:**
+- WalletConnect v2 already implemented (`src/signers/walletconnect.ts`)
+- Just needs: persistent session management + MCP server integration
+- Mobile app (MetaMask, Phantom) handles key storage + biometric auth
+- No private keys on the server/CLI machine at all
+
+### Phase 3: Multi-Client Support
+
+Support multiple MCP transport types for different use cases:
+
+| Transport | Use Case | Auth |
+|-----------|----------|------|
+| `stdio` | Claude Code (local) | Process isolation |
+| `SSE` | Web dashboard, remote AI | API key / JWT |
+| `WebSocket` | Real-time mobile app | WalletConnect session |
+
+**Future extensions:**
+- Telegram bot via MCP SSE transport
+- Discord bot for team wallet management
+- Scheduled operations (DCA, rebalancing) via cron + MCP
+- Multi-wallet support (manage multiple addresses)
+
+### New Files
+
+```
+src/
+  mcp/
+    server.ts           — MCP server setup (stdio + SSE transports)
+    tools.ts            — tool definitions + handlers (calls existing command functions)
+    resources.ts        — MCP resource providers (config, balances, deposits)
+    auth.ts             — API key validation for SSE transport
+```
+
+### Dependencies
+
+- `@modelcontextprotocol/sdk` — MCP server SDK (TypeScript)
+- No new deps for Phase 2 (WalletConnect already installed)
+
+### Netguard
+
+No new hosts needed — MCP uses stdio/local transports. SSE runs locally.
+WalletConnect relay already whitelisted.
+
+### Security Considerations
+
+- MCP stdio transport: inherently safe (same process isolation as running `wallet` directly)
+- SSE transport: requires API key auth, bind to localhost by default
+- Write tools: always require explicit confirmation (no auto-execute)
+- Audit gate: enforced for all write operations regardless of client
+- Private keys: never exposed via MCP tools (signing happens internally or via WC)
 
 ---
 
@@ -448,7 +623,8 @@ interface Signer {
 
 | # | Feature | Status | Priority |
 |---|---------|--------|----------|
+| 17 | Off-ramp (Spritz + Peer) | **DONE** — both providers implemented | High |
+| 19 | MCP Server (AI agent + mobile remote control) | **NEXT** | High |
 | 14 | Encrypted keystore + signer abstraction | Signer + WC done, keystore TODO | High |
 | 15 | Fiat on-ramp/off-ramp + 2FA | TODO | Medium |
-| 17 | Off-ramp + bill pay (Spritz) | Off-ramp DONE, bill pay TODO | Medium-High |
 | 16 | Brokerage integrations | TODO | Low |
