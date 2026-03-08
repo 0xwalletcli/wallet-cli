@@ -24,19 +24,19 @@ export async function depositPlatformsCommand() {
     revolut: { handle: 'username or @tag', example: '@johndoe' },
   };
 
-  console.log('  ┌─────────────────┬──────────────────────────────────────┬─────────────────────┐');
-  console.log('  │ Platform        │ Handle Format                        │ Example             │');
-  console.log('  ├─────────────────┼──────────────────────────────────────┼─────────────────────┤');
+  console.log('  ┌─────────────────┬──────────────────────────────────────────────┬───────────────────────────┐');
+  console.log('  │ Platform        │ Handle Format                                │ Example                   │');
+  console.log('  ├─────────────────┼──────────────────────────────────────────────┼───────────────────────────┤');
 
   for (const p of SUPPORTED_PLATFORMS) {
     const label = getPlatformLabel(p).padEnd(15);
     const details = PLATFORM_DETAILS[p];
-    const handle = (details?.handle || '—').padEnd(36);
-    const example = (details?.example || '—').padEnd(19);
+    const handle = (details?.handle || '—').padEnd(44);
+    const example = (details?.example || '—').padEnd(25);
     console.log(`  │ ${label} │ ${handle} │ ${example} │`);
   }
 
-  console.log('  └─────────────────┴──────────────────────────────────────┴─────────────────────┘');
+  console.log('  └─────────────────┴──────────────────────────────────────────────┴───────────────────────────┘');
   console.log('\n  How off-ramp works (USDC → fiat):');
   console.log('    1. You lock USDC into Peer escrow on Base');
   console.log('    2. Buyers find your position on peer.xyz');
@@ -139,7 +139,7 @@ export async function depositLiquidityCommand(amountStr: string) {
 
 export async function depositBuyCommand(amountStr: string, dryRun: boolean, platformFilter?: string) {
   validateAmount(amountStr);
-  const { getPeerClient, BASE_USDC, SUPPORTED_PLATFORMS, getPlatformLabel, rateToSpread } = await import('../lib/peer.js');
+  const { BASE_USDC, SUPPORTED_PLATFORMS, getPlatformLabel, rateToSpread } = await import('../lib/peer.js');
   const { createInterface } = await import('readline');
 
   const signer = await resolveSigner();
@@ -165,29 +165,41 @@ export async function depositBuyCommand(amountStr: string, dryRun: boolean, plat
 
   console.log(`  Checking available USDC on ${platforms.map(getPlatformLabel).join(', ')}...`);
 
-  // Fetch quotes — "I want X USDC, how much fiat do I pay?"
-  const client = await getPeerClient();
-  let quote: any;
+  // Fetch quotes via direct API (SDK getQuote sends x-api-key header causing 401)
+  const usdcRawAmount = String(Math.round(Number(amountStr) * 1e6));
+  let quotes: any[] = [];
   try {
-    quote = await client.getQuote({
-      paymentPlatforms: platforms,
-      fiatCurrency: 'USD',
-      user: account.address,
-      recipient: account.address,
-      destinationChainId: 8453,
-      destinationToken: BASE_USDC,
-      amount: amountStr,
-      isExactFiat: false,
-      includeNearbyQuotes: true,
-      nearbySearchRange: 10,
-      quotesToReturn: 10,
+    const res = await fetch('https://api.zkp2p.xyz/v2/quote/exact-token?quotesToReturn=10', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paymentPlatforms: platforms,
+        fiatCurrency: 'USD',
+        destinationChainId: 8453,
+        destinationToken: BASE_USDC,
+        exactTokenAmount: usdcRawAmount,
+        user: account.address,
+        recipient: account.address,
+        includeNearbyQuotes: true,
+        nearbySearchRange: 10,
+      }),
     });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null) as any;
+      if (body?.message === 'No quotes found') {
+        quotes = [];
+      } else {
+        throw new Error(`Peer HTTP ${res.status}`);
+      }
+    } else {
+      const data = (await res.json()) as any;
+      quotes = data?.responseObject?.quotes || [];
+    }
   } catch (err: any) {
     console.error(`  Failed to fetch quotes: ${err.message}\n`);
     return;
   }
-
-  const quotes = quote?.responseObject?.quotes || [];
   if (quotes.length === 0) {
     console.log('\n  No sellers found for this amount.\n');
     console.log('  Peer liquidity is P2P — availability changes in real-time.');
@@ -195,36 +207,60 @@ export async function depositBuyCommand(amountStr: string, dryRun: boolean, plat
     return;
   }
 
-  // Show available quotes
-  console.log(`\n  Found ${quotes.length} seller${quotes.length > 1 ? 's' : ''}:\n`);
-  console.log('  ┌────┬─────────────────────┬──────────────────┬──────────────────┬──────────┐');
-  console.log('  │ #  │ Platform            │ You receive      │ You pay (fiat)   │ Markup   │');
-  console.log('  ├────┼─────────────────────┼──────────────────┼──────────────────┼──────────┤');
-
-  for (let i = 0; i < quotes.length; i++) {
-    const q = quotes[i];
-    const num = String(i + 1).padStart(2);
-    const platform = (getPlatformLabel(q.paymentMethod || q.paymentPlatform || '?')).padEnd(19);
-    const tokenAmt = q.tokenAmountFormatted || formatToken(Number(q.tokenAmount || 0) / 1e6, 2);
-    const receive = `${tokenAmt} USDC`.padStart(16);
-    const fiatAmt = q.fiatAmountFormatted || formatUSD(Number(q.fiatAmount || 0) / 100, 2);
-    const pay = `$${fiatAmt}`.padStart(16);
-    const spread = q.conversionRate ? `${formatToken(rateToSpread(q.conversionRate), 2)}%` : '?';
-    const markup = spread.padStart(8);
-    console.log(`  │ ${num} │ ${platform} │ ${receive} │ ${pay} │ ${markup} │`);
+  // Collapse quotes by platform
+  const byPlatform: Record<string, { count: number; bestFiat: number; worstFiat: number; bestMarkup: number; worstMarkup: number }> = {};
+  for (const q of quotes) {
+    const p = q.paymentMethod || q.paymentPlatform || '?';
+    const fiat = Number(q.fiatAmount || 0) / 1e6;
+    const markup = q.conversionRate ? rateToSpread(q.conversionRate) : 0;
+    if (!byPlatform[p]) {
+      byPlatform[p] = { count: 0, bestFiat: fiat, worstFiat: fiat, bestMarkup: markup, worstMarkup: markup };
+    }
+    byPlatform[p].count++;
+    if (fiat < byPlatform[p].bestFiat) { byPlatform[p].bestFiat = fiat; byPlatform[p].bestMarkup = markup; }
+    if (fiat > byPlatform[p].worstFiat) { byPlatform[p].worstFiat = fiat; byPlatform[p].worstMarkup = markup; }
   }
 
-  console.log('  └────┴─────────────────────┴──────────────────┴──────────────────┴──────────┘');
+  const tokenAmt = formatToken(Number(quotes[0].tokenAmount || 0) / 1e6, 2);
+  const platformKeys = Object.keys(byPlatform);
+
+  console.log(`\n  ${quotes.length} sellers across ${platformKeys.length} platform${platformKeys.length > 1 ? 's' : ''} for ${tokenAmt} USDC:\n`);
+  console.log('  ┌─────────────────────┬──────────────────┬───────────────┬──────────┐');
+  console.log('  │ Platform            │ Best price       │ Markup        │ Sellers  │');
+  console.log('  ├─────────────────────┼──────────────────┼───────────────┼──────────┤');
+
+  for (const p of platformKeys) {
+    const info = byPlatform[p];
+    const label = getPlatformLabel(p).padEnd(19);
+    const best = formatUSD(info.bestFiat).padStart(16);
+    const markupStr = info.bestMarkup === info.worstMarkup
+      ? `${formatToken(info.bestMarkup, 2)}%`
+      : `${formatToken(info.bestMarkup, 2)}-${formatToken(info.worstMarkup, 2)}%`;
+    const markup = markupStr.padStart(13);
+    const sellers = String(info.count).padStart(8);
+    console.log(`  │ ${label} │ ${best} │ ${markup} │ ${sellers} │`);
+  }
+
+  console.log('  └─────────────────────┴──────────────────┴───────────────┴──────────┘');
 
   if (dryRun) {
     console.log('\n  [DRY RUN] Skipping execution. Add --run to signal intent and buy.\n');
     return;
   }
 
-  // Select a quote
+  // Show individual sellers for selection
+  console.log(`\n  Select a seller:\n`);
+  for (let i = 0; i < quotes.length; i++) {
+    const q = quotes[i];
+    const label = getPlatformLabel(q.paymentMethod || q.paymentPlatform || '?');
+    const fiat = formatUSD(Number(q.fiatAmount || 0) / 1e6);
+    const markup = q.conversionRate ? `${formatToken(rateToSpread(q.conversionRate), 2)}%` : '?';
+    console.log(`    ${i + 1}. ${label}  ${fiat}  (${markup} markup)`);
+  }
+
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const choice = await new Promise<string>((resolve) => {
-    rl.question(`\n  Select seller [1-${quotes.length}]: `, resolve);
+    rl.question(`\n  Seller [1-${quotes.length}]: `, resolve);
   });
   rl.close();
 
@@ -238,12 +274,12 @@ export async function depositBuyCommand(amountStr: string, dryRun: boolean, plat
   const intent = selected.intent;
 
   // Show summary
-  const tokenAmt = selected.tokenAmountFormatted || formatToken(Number(selected.tokenAmount || 0) / 1e6, 2);
-  const fiatAmt = selected.fiatAmountFormatted || String(Number(selected.fiatAmount || 0) / 100);
+  const selTokenAmt = formatToken(Number(selected.tokenAmount || 0) / 1e6, 2);
+  const fiatAmt = formatToken(Number(selected.fiatAmount || 0) / 1e6, 2);
   const platformLabel = getPlatformLabel(selected.paymentMethod || '');
 
   console.log('\n  ── On-ramp Summary ──');
-  console.log(`  You receive: ${tokenAmt} USDC on Base`);
+  console.log(`  You receive: ${selTokenAmt} USDC on Base`);
   console.log(`  You pay:     ~$${fiatAmt} via ${platformLabel}`);
   if (selected.payeeData) {
     const payeeKeys = Object.keys(selected.payeeData);
@@ -260,6 +296,8 @@ export async function depositBuyCommand(amountStr: string, dryRun: boolean, plat
 
   try {
     console.log('  Signaling intent...');
+    const { getPeerClient } = await import('../lib/peer.js');
+    const client = await getPeerClient();
     const hash = await client.signalIntent({
       depositId: BigInt(intent.depositId),
       amount: BigInt(intent.amount),
@@ -304,39 +342,95 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean, p
   console.log(`  Chain: Base mainnet`);
   console.log(`  From: ${account.address}\n`);
 
-  console.log('  Checking USDC balance on Base...');
-  const balance = await getBaseUsdcBalance(account.address);
-  const balanceHuman = Number(balance) / 1e6;
-  console.log(`  Balance: ${formatUsdc(balance)} USDC\n`);
-
-  if (balanceHuman < Number(amountStr)) {
-    console.error(`  Insufficient USDC on Base (have: ${formatUsdc(balance)}, need: ${amountStr}).`);
-    console.error('  Bridge USDC to Base first: wallet bridge <amount> usdc usdc-base\n');
-    return;
-  }
-
-  // Select payment platforms
+  // Resolve platforms
   let selectedPlatforms: readonly string[];
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-
   if (platformFilter) {
     const p = platformFilter.toLowerCase();
     if (!SUPPORTED_PLATFORMS.includes(p as any)) {
-      rl.close();
       console.error(`  Unknown platform: "${p}". Valid: ${SUPPORTED_PLATFORMS.join(', ')}`);
       return;
     }
     selectedPlatforms = [p];
-    console.log(`  Platform: ${getPlatformLabel(p)}\n`);
   } else {
-    console.log('  Select payment methods (enter numbers separated by commas):');
+    selectedPlatforms = [...SUPPORTED_PLATFORMS];
+  }
+
+  // Show saved handles
+  const { getPaymentHandles } = await import('../lib/config.js');
+  const savedHandles = getPaymentHandles();
+  const configuredPlatforms = selectedPlatforms.filter(p => (savedHandles as any)[p]);
+  const unconfiguredPlatforms = selectedPlatforms.filter(p => !(savedHandles as any)[p]);
+
+  if (configuredPlatforms.length > 0) {
+    for (const p of configuredPlatforms) {
+      console.log(`  ${getPlatformLabel(p)}: ${(savedHandles as any)[p]} (from config)`);
+    }
+  }
+
+  // Dry-run: show liquidity preview and exit
+  if (dryRun) {
+    // Fetch current off-ramp liquidity (who's buying USDC)
+    console.log(`\n  Checking off-ramp liquidity for ${amountStr} USDC...`);
+    try {
+      const { fetchPeerLiquidity } = await import('./quote.js');
+      const peer = await fetchPeerLiquidity(amountStr, selectedPlatforms as string[]);
+
+      if (peer.totalUsdc > 0 && peer.byPlatform.length > 0) {
+        const buyerCount = peer.byPlatform.reduce((s, p) => s + p.quoteCount, 0);
+        const platCount = peer.byPlatform.length;
+        console.log(`\n  ${buyerCount} buyer${buyerCount !== 1 ? 's' : ''} across ${platCount} platform${platCount !== 1 ? 's' : ''}:\n`);
+        console.log('  ┌─────────────────────┬──────────────────┬───────────────┬──────────┐');
+        console.log('  │ Platform            │ Capacity         │ Best spread   │ Buyers   │');
+        console.log('  ├─────────────────────┼──────────────────┼───────────────┼──────────┤');
+
+        for (const p of peer.byPlatform) {
+          const label = getPlatformLabel(p.platform).padEnd(19);
+          const cap = formatUSD(p.totalUsdc, 0).padStart(16);
+          const spread = `${formatToken(p.bestSpread, 2)}%`.padStart(13);
+          const buyers = String(p.quoteCount).padStart(8);
+          console.log(`  │ ${label} │ ${cap} │ ${spread} │ ${buyers} │`);
+        }
+
+        console.log('  └─────────────────────┴──────────────────┴───────────────┴──────────┘');
+
+        if (peer.bestSpread != null) {
+          const spreadEarnings = Number(amountStr) * (peer.bestSpread / 100);
+          console.log(`\n  At ${formatToken(peer.bestSpread, 2)}% spread you earn ~${formatUSD(spreadEarnings)} on ${amountStr} USDC`);
+        }
+      } else {
+        console.log(`\n  No buyers found on ${selectedPlatforms.map(getPlatformLabel).join(', ')} right now.`);
+        console.log('  Liquidity is P2P — availability changes in real-time.');
+      }
+    } catch {
+      console.log(`\n  No buyers found on ${selectedPlatforms.map(getPlatformLabel).join(', ')} right now.`);
+      console.log('  Liquidity is P2P — availability changes in real-time.');
+    }
+
+    console.log(`\n  ── Off-ramp Preview ──`);
+    console.log(`  Lock:       ${amountStr} USDC in escrow on Base`);
+    console.log(`  Platforms:  ${selectedPlatforms.map(getPlatformLabel).join(', ')}`);
+    if (unconfiguredPlatforms.length > 0) {
+      console.log(`  Missing:    ${unconfiguredPlatforms.map(getPlatformLabel).join(', ')} (will prompt for handle)`);
+    }
+    console.log(`  Spread:     you choose (e.g., 2% — buyer pays $${(Number(amountStr) * 1.02).toFixed(2)} for ${amountStr} USDC)`);
+    console.log(`\n  [DRY RUN] Add --run to execute.\n`);
+    return;
+  }
+
+  // ── Interactive flow (--run) ──
+
+  // Narrow platforms if no filter was passed
+  if (!platformFilter) {
+    console.log('\n  Select payment methods (enter numbers separated by commas):');
     for (let i = 0; i < SUPPORTED_PLATFORMS.length; i++) {
       console.log(`    ${i + 1}. ${getPlatformLabel(SUPPORTED_PLATFORMS[i])}`);
     }
 
+    const rl2 = createInterface({ input: process.stdin, output: process.stdout });
     const platformAnswer = await new Promise<string>((resolve) => {
-      rl.question('  Platforms [1,2,3,...]: ', resolve);
+      rl2.question('  Platforms [1,2,3,...]: ', resolve);
     });
+    rl2.close();
 
     const platformIndices = platformAnswer.split(',').map(s => parseInt(s.trim(), 10) - 1);
     selectedPlatforms = platformIndices
@@ -344,7 +438,6 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean, p
       .map(i => SUPPORTED_PLATFORMS[i]);
 
     if (selectedPlatforms.length === 0) {
-      rl.close();
       console.log('  No valid platforms selected. Cancelled.\n');
       return;
     }
@@ -352,10 +445,7 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean, p
     console.log(`  Selected: ${selectedPlatforms.map(getPlatformLabel).join(', ')}\n`);
   }
 
-  // Collect deposit data (payment handles) per platform — use saved handles if available
-  const { getPaymentHandles } = await import('../lib/config.js');
-  const savedHandles = getPaymentHandles();
-
+  // Collect handles for unconfigured platforms
   const HANDLE_HINTS: Record<string, string> = {
     venmo: 'username or phone (e.g., @john-doe or 555-123-4567)',
     zelle: 'email or phone registered with your bank',
@@ -364,11 +454,11 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean, p
   };
 
   const depositData: { [key: string]: string }[] = [];
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
   for (const platform of selectedPlatforms) {
     const label = getPlatformLabel(platform);
     const saved = (savedHandles as any)[platform];
     if (saved) {
-      console.log(`  ${label}: ${saved} (from config)`);
       depositData.push({ processorName: platform, id: saved });
     } else {
       const hint = HANDLE_HINTS[platform] || 'handle/tag';
@@ -404,13 +494,20 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean, p
   console.log(`  You receive: ~$${(Number(amountStr) * (1 + spreadPct / 100)).toFixed(2)} fiat when buyer pays`);
   console.log(`  Chain:      Base mainnet\n`);
 
-  if (dryRun) {
-    console.log('  [DRY RUN] Skipping execution.\n');
+  if (!await confirm('Lock USDC and create position?')) {
+    console.log('  Cancelled.\n');
     return;
   }
 
-  if (!await confirm('Lock USDC and create position?')) {
-    console.log('  Cancelled.\n');
+  // Check balance before executing
+  console.log('  Checking USDC balance on Base...');
+  const balance = await getBaseUsdcBalance(account.address);
+  const balanceHuman = Number(balance) / 1e6;
+  console.log(`  Balance: ${formatUsdc(balance)} USDC\n`);
+
+  if (balanceHuman < Number(amountStr)) {
+    console.error(`  Insufficient USDC on Base (have: ${formatUsdc(balance)}, need: ${amountStr}).`);
+    console.error('  Bridge USDC to Base first: wallet bridge <amount> usdc usdc-base\n');
     return;
   }
 

@@ -246,7 +246,7 @@ interface PeerLiquidity {
   byPlatform: PeerPlatformLiquidity[];
 }
 
-export async function fetchPeerLiquidity(amount: string): Promise<PeerLiquidity> {
+export async function fetchPeerLiquidity(amount: string, platforms?: string[]): Promise<PeerLiquidity> {
   let userAddr = '0x0000000000000000000000000000000000000001';
   try { userAddr = (await (await resolveSigner()).getEvmAccount()).address; } catch {}
 
@@ -257,7 +257,7 @@ export async function fetchPeerLiquidity(amount: string): Promise<PeerLiquidity>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      paymentPlatforms: ['venmo', 'zelle', 'cashapp', 'revolut'],
+      paymentPlatforms: platforms || ['venmo', 'zelle', 'cashapp', 'revolut'],
       fiatCurrency: 'USD',
       destinationChainId: 8453,
       destinationToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
@@ -285,7 +285,7 @@ export async function fetchPeerLiquidity(amount: string): Promise<PeerLiquidity>
   }
   let totalUsdc = 0;
   let bestSpread: number | null = null;
-  const platforms = new Set<string>();
+  const foundPlatforms = new Set<string>();
   const platformMap: Record<string, { totalUsdc: number; bestSpread: number; count: number }> = {};
   for (const q of quotes) {
     const tokenAmt = q.tokenAmount ? Number(q.tokenAmount) / 1e6 : 0;
@@ -298,7 +298,7 @@ export async function fetchPeerLiquidity(amount: string): Promise<PeerLiquidity>
     }
     const platform = q.paymentMethod || q.paymentPlatform;
     if (platform) {
-      platforms.add(platform);
+      foundPlatforms.add(platform);
       if (!platformMap[platform]) platformMap[platform] = { totalUsdc: 0, bestSpread: Infinity, count: 0 };
       platformMap[platform].totalUsdc += tokenAmt;
       platformMap[platform].count++;
@@ -308,7 +308,7 @@ export async function fetchPeerLiquidity(amount: string): Promise<PeerLiquidity>
   const byPlatform = Object.entries(platformMap)
     .map(([platform, d]) => ({ platform, totalUsdc: d.totalUsdc, bestSpread: d.bestSpread, quoteCount: d.count }))
     .sort((a, b) => a.bestSpread - b.bestSpread);
-  return { totalUsdc, bestSpread, platforms: [...platforms], byPlatform };
+  return { totalUsdc, bestSpread, platforms: [...foundPlatforms], byPlatform };
 }
 
 interface BridgeToBaseResult {
