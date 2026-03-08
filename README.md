@@ -11,7 +11,7 @@ CLI tool for managing crypto without centralized exchanges.
 - **Unstake** stETH (Lido withdrawal queue, 1-5 days) or JitoSOL (Jito instant)
 - **Zap** USDC into staked assets in one step — stETH (swap+Lido) or JitoSOL (bridge+Jito)
 - **Value** any token in USD, or convert between tokens (`wallet value 10000 usdc eth`)
-- **Quote** compare end-to-end costs across multiple DeFi paths with yield projections
+- **Quote** compare end-to-end costs across DeFi staking paths + off-ramp paths (Peer P2P liquidity, Spritz ACH)
 - **Transactions** history across Ethereum, Base, and Solana with clickable explorer links
 - **Wrap/Unwrap** native assets: ETH ↔ WETH, SOL ↔ WSOL
 - **Audit** all integrations before mainnet transactions (prices, pools, contracts, APIs)
@@ -401,6 +401,25 @@ wallet withdraw history        # recent bank withdrawals
 - Bridge validates contract addresses against known deBridge DLN contracts
 - Balances are checked before attempting transactions
 - `.env` is in `.gitignore` — never committed
+
+## Peer Off-ramp: On-chain vs Off-chain
+
+[Peer](https://peer.xyz) (prev ZKP2P) is a decentralized P2P off-ramp. Here's exactly what happens on-chain vs off-chain:
+
+**On-chain (trustless, verifiable on Base):**
+- USDC escrow — deposits are locked in smart contracts (`0x2f121cdd...88888`), not held by Peer
+- Intent signaling — buyer commits to purchase on-chain
+- Fund release — USDC released to buyer after zero-knowledge proof of fiat payment
+- All custody is non-custodial — the protocol contracts hold funds, not any company
+
+**Off-chain (centralized API at `api.zkp2p.xyz`):**
+- Liquidity discovery — finding available deposits and matching buyers to sellers
+- Quote/pricing — the `/v2/quote` endpoint aggregates available LP rates
+- ZK proof verification relay — verifying proof-of-payment (e.g., you prove you sent Venmo without revealing account details)
+
+**Why we use the API:** The on-chain contracts don't have a built-in order book. To find available deposits and their rates, you'd have to scan all contract events and index them yourself — which is what Peer's indexer (`indexer.hyperindex.xyz`) does. The API is a convenience layer over on-chain state. We could theoretically read deposits directly from the contract, but it would be significantly slower and more complex.
+
+**Supported payment platforms:** Venmo, Zelle, CashApp, Revolut. Available liquidity varies by platform and changes in real-time — `wallet quote` and `wallet health` show current availability.
 
 ## How It Works
 

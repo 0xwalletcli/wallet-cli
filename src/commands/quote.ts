@@ -230,12 +230,117 @@ async function fetchProviderBridgeQuote(
   return { outputAmount, protocolFeeEth };
 }
 
+// ── Off-ramp fetchers ────────────────────────────────
+
+interface PeerPlatformLiquidity {
+  platform: string;
+  totalUsdc: number;
+  bestSpread: number;
+  quoteCount: number;
+}
+
+interface PeerLiquidity {
+  totalUsdc: number;
+  bestSpread: number | null;
+  platforms: string[];
+  byPlatform: PeerPlatformLiquidity[];
+}
+
+export async function fetchPeerLiquidity(amount: string): Promise<PeerLiquidity> {
+  let userAddr = '0x0000000000000000000000000000000000000001';
+  try { userAddr = (await (await resolveSigner()).getEvmAccount()).address; } catch {}
+
+  // Use exact-token: "I have X USDC, what fiat do I get?"
+  // quotesToReturn=50 to get full orderbook (default returns only best quote)
+  const usdcRawAmount = String(Math.round(Number(amount) * 1e6));
+  const res = await withTimeout(fetch('https://api.zkp2p.xyz/v2/quote/exact-token?quotesToReturn=50', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      paymentPlatforms: ['venmo', 'zelle', 'cashapp', 'revolut'],
+      fiatCurrency: 'USD',
+      destinationChainId: 8453,
+      destinationToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      exactTokenAmount: usdcRawAmount,
+      user: userAddr,
+      recipient: userAddr,
+    }),
+  }), TIMEOUT);
+
+  // API returns JSON 404 for "no quotes found" — not a routing error
+  if (!res.ok) {
+    try {
+      const body = (await res.json()) as any;
+      if (body?.message === 'No quotes found') {
+        return { totalUsdc: 0, bestSpread: null, platforms: [], byPlatform: [] };
+      }
+    } catch { /* fall through */ }
+    throw new Error(`Peer HTTP ${res.status}`);
+  }
+
+  const data = (await res.json()) as any;
+  const quotes = data?.responseObject?.quotes || data?.quotes || [];
+  if (!Array.isArray(quotes) || quotes.length === 0) {
+    return { totalUsdc: 0, bestSpread: null, platforms: [], byPlatform: [] };
+  }
+  let totalUsdc = 0;
+  let bestSpread: number | null = null;
+  const platforms = new Set<string>();
+  const platformMap: Record<string, { totalUsdc: number; bestSpread: number; count: number }> = {};
+  for (const q of quotes) {
+    const tokenAmt = q.tokenAmount ? Number(q.tokenAmount) / 1e6 : 0;
+    totalUsdc += tokenAmt;
+    let spreadPct = 0;
+    if (q.conversionRate != null) {
+      const rate = Number(q.conversionRate) / 1e18;
+      spreadPct = Math.abs(rate - 1) * 100;
+      if (bestSpread == null || spreadPct < bestSpread) bestSpread = spreadPct;
+    }
+    const platform = q.paymentMethod || q.paymentPlatform;
+    if (platform) {
+      platforms.add(platform);
+      if (!platformMap[platform]) platformMap[platform] = { totalUsdc: 0, bestSpread: Infinity, count: 0 };
+      platformMap[platform].totalUsdc += tokenAmt;
+      platformMap[platform].count++;
+      if (spreadPct < platformMap[platform].bestSpread) platformMap[platform].bestSpread = spreadPct;
+    }
+  }
+  const byPlatform = Object.entries(platformMap)
+    .map(([platform, d]) => ({ platform, totalUsdc: d.totalUsdc, bestSpread: d.bestSpread, quoteCount: d.count }))
+    .sort((a, b) => a.bestSpread - b.bestSpread);
+  return { totalUsdc, bestSpread, platforms: [...platforms], byPlatform };
+}
+
+interface BridgeToBaseResult {
+  usdcReceived: number;
+  feeEstimate: number;
+}
+
+async function fetchBridgeToBaseQuote(usdcRaw: string): Promise<BridgeToBaseResult> {
+  let srcAddress = '0x0000000000000000000000000000000000000001';
+  try { srcAddress = (await (await resolveSigner()).getEvmAccount()).address; } catch {}
+  const provider = getBridgeProvider('debridge');
+  const quote = await withTimeout(provider.getQuote({
+    srcChainId: '1',
+    dstChainId: '8453',
+    srcToken: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC on Ethereum
+    dstToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', // USDC on Base
+    amount: usdcRaw,
+    srcAddress,
+    dstAddress: srcAddress,
+  }), TIMEOUT);
+  const usdcReceived = Number(quote.dstAmount) / 10 ** quote.dstDecimals;
+  const feeEstimate = (Number(usdcRaw) / 1e6) - usdcReceived;
+  return { usdcReceived, feeEstimate };
+}
+
 // ── Path types ───────────────────────────────────────
 
 interface PathResult {
   name: string;
   label: string;
   asset: string;
+  category?: 'stake' | 'offramp';
   steps: { action: string; input: string; output: string; fee: string; note?: string }[];
   finalAmount: number;
   finalValue: number;
@@ -326,9 +431,13 @@ export async function quoteCommand(amount: string, network: Network) {
   const isMainnet = network === 'mainnet';
   const tokens = TOKENS[network];
 
-  console.log(`\n  ── Quote: ${formatToken(usdcAmount, 2)} USDC -> Staked Assets ${LINE}`);
+  console.log(`\n  ── Quote: ${formatToken(usdcAmount, 2)} USDC ${LINE}`);
   console.log(`  Network: ${network}`);
-  console.log('  Fetching quotes...\n');
+  console.log('  Fetching quotes from all providers...\n');
+
+  // Check off-ramp availability
+  const spritzConfigured = !!(process.env.SPRITZ_API_KEY || process.env.SPRITZ_INTEGRATION_KEY);
+  const peerConfigured = !!(process.env.EVM_PRIVATE_KEY || process.env.WC_PROJECT_ID);
 
   // Fire all API calls in parallel
   const [
@@ -344,6 +453,8 @@ export async function quoteCommand(amount: string, network: Network) {
     lifiBridgeSolRes,
     lidoAprRes,
     jitoApyRes,
+    peerLiqRes,
+    bridgeToBaseRes,
   ] = await Promise.allSettled([
     fetchMarketPrices(),
     fetchCowQuote(network, usdcRaw, tokens.WETH, tokens.WETH_DECIMALS),
@@ -367,6 +478,14 @@ export async function quoteCommand(amount: string, network: Network) {
       : Promise.reject(new Error('mainnet only')),
     fetchLidoApr(),
     isMainnet ? fetchJitoApy() : Promise.reject(new Error('mainnet only')),
+    // Off-ramp: Peer liquidity
+    (isMainnet && peerConfigured)
+      ? fetchPeerLiquidity(amount)
+      : Promise.reject(new Error('not configured')),
+    // Off-ramp: Bridge USDC to Base cost estimate
+    isMainnet
+      ? fetchBridgeToBaseQuote(usdcRaw.toString())
+      : Promise.reject(new Error('mainnet only')),
   ]);
 
   // Extract results
@@ -684,22 +803,146 @@ export async function quoteCommand(amount: string, network: Network) {
     console.log(`    Failed: ${msg}\n`);
   }
 
+  // ── Off-ramp paths ────────────────────────────────
+
+  const offrampPaths: PathResult[] = [];
+
+  // Path G: USDC → Bridge to Base → Peer P2P (receive fiat)
+  if (peerLiqRes.status === 'fulfilled' && peerLiqRes.value.totalUsdc > 0) {
+    const peer = peerLiqRes.value;
+    const bridgeCost = bridgeToBaseRes.status === 'fulfilled' ? bridgeToBaseRes.value.feeEstimate : 0;
+    const usdcOnBase = bridgeToBaseRes.status === 'fulfilled' ? bridgeToBaseRes.value.usdcReceived : usdcAmount;
+    const spreadEarnings = peer.bestSpread != null ? usdcOnBase * (peer.bestSpread / 100) : 0;
+    const netFiat = usdcOnBase + spreadEarnings;
+    const totalCost = usdcAmount - netFiat; // bridge fee only (spread is profit)
+    const costPct = (totalCost / usdcAmount) * 100;
+    const platformList = peer.platforms.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(', ');
+
+    const steps: PathResult['steps'] = [];
+    if (bridgeToBaseRes.status === 'fulfilled') {
+      steps.push({
+        action: 'USDC → USDC-BASE (Bridge to Base)',
+        input: `${formatToken(usdcAmount, 2)} USDC`,
+        output: `${formatToken(usdcOnBase, 2)} USDC`,
+        fee: bridgeCost > 0 ? `~${formatUSD(bridgeCost)} bridge fee` : 'minimal',
+      });
+    }
+    // Build per-platform liquidity breakdown
+    const platformLines = peer.byPlatform.map(p => {
+      const label = p.platform.charAt(0).toUpperCase() + p.platform.slice(1);
+      return `${label}: ${formatUSD(p.totalUsdc, 0)} (${formatToken(p.bestSpread, 2)}% best, ${p.quoteCount} LP${p.quoteCount > 1 ? 's' : ''})`;
+    });
+    steps.push({
+      action: 'USDC-BASE → Fiat (Peer P2P)',
+      input: `${formatToken(usdcOnBase, 2)} USDC`,
+      output: `~${formatUSD(netFiat)} fiat`,
+      fee: peer.bestSpread != null ? `${formatToken(peer.bestSpread, 2)}% spread (your profit)` : 'varies by LP',
+      note: `Liquidity: ${formatUSD(peer.totalUsdc, 0)} USDC across ${peer.byPlatform.length} platform(s)` +
+        (platformLines.length > 0 ? '\n      ' + platformLines.join('\n      ') : '') +
+        '\n      Settlement: lock USDC → buyer pays you fiat → escrow releases',
+    });
+
+    offrampPaths.push({
+      name: 'G',
+      label: 'Bridge + Peer (P2P)',
+      asset: 'Fiat',
+      category: 'offramp',
+      steps,
+      finalAmount: netFiat,
+      finalValue: netFiat,
+      totalCost,
+      costPct,
+    });
+  } else if (isMainnet && peerConfigured) {
+    if (peerLiqRes.status === 'fulfilled' && peerLiqRes.value.totalUsdc === 0) {
+      console.log(`  ── Path G: Bridge + Peer (P2P) ${LINE}`);
+      console.log('    No Peer liquidity available for this amount.\n');
+    } else if (peerLiqRes.status === 'rejected' && !peerLiqRes.reason?.message?.includes('not configured')) {
+      console.log(`  ── Path G: Bridge + Peer (P2P) ${LINE}`);
+      console.log(`    Failed: ${peerLiqRes.reason?.message || 'unknown error'}\n`);
+    }
+  }
+
+  // Path H: USDC → Spritz (ACH to bank)
+  // Spritz doesn't have a standalone quote API — fees come back with payment requests.
+  // Try to get real fee data if configured, otherwise use estimate.
+  if (isMainnet && spritzConfigured) {
+    let spritzFee = 2.50;  // estimated flat fee
+    let gasFee = 0.50;     // estimated gas
+    let feeLabel = `~${formatUSD(spritzFee)} Spritz fee + ~${formatUSD(gasFee)} gas (est.)`;
+
+    try {
+      const { getSpritzClient } = await import('../lib/spritz.js');
+      const client = getSpritzClient();
+      const accounts = await withTimeout(client.bankAccount.list(), TIMEOUT);
+      if (accounts.length > 0) {
+        const pr = await withTimeout(client.paymentRequest.create({
+          accountId: accounts[0].id,
+          amount: usdcAmount,
+          network: 'ethereum' as any,
+        }), TIMEOUT);
+        if (pr.feeAmount != null) {
+          spritzFee = pr.feeAmount;
+          gasFee = 0.50; // gas is still estimated
+          feeLabel = `${formatUSD(spritzFee)} Spritz fee + ~${formatUSD(gasFee)} gas`;
+        }
+      }
+    } catch { /* use estimates */ }
+
+    const netFiat = usdcAmount - spritzFee - gasFee;
+    const totalCost = spritzFee + gasFee;
+    const costPct = (totalCost / usdcAmount) * 100;
+
+    offrampPaths.push({
+      name: 'H',
+      label: 'Spritz (ACH to bank)',
+      asset: 'Fiat',
+      category: 'offramp',
+      steps: [
+        {
+          action: 'USDC → Bank (Spritz ACH)',
+          input: `${formatToken(usdcAmount, 2)} USDC`,
+          output: `~${formatUSD(netFiat)}`,
+          fee: feeLabel,
+          note: 'Settlement: 1 business day (ACH)',
+        },
+      ],
+      finalAmount: netFiat,
+      finalValue: netFiat,
+      totalCost,
+      costPct,
+    });
+  }
+
   // Testnet note
   if (!isMainnet && paths.length <= 1) {
-    console.log('  Note: deBridge, Jupiter, Jito, and LI.FI Bridge are mainnet-only.');
+    console.log('  Note: deBridge, Jupiter, Jito, LI.FI Bridge, and off-ramp are mainnet-only.');
     console.log('  Some paths only available on mainnet.\n');
   }
 
-  // Group by asset (stETH first, then JitoSOL), sorted by cost within each group
+  // Group by category: staking paths, then off-ramp paths
   const stethPaths = paths.filter(p => p.asset === 'stETH').sort((a, b) => a.costPct - b.costPct);
-  const jitoPaths = paths.filter(p => p.asset !== 'stETH').sort((a, b) => a.costPct - b.costPct);
-  const sorted = [...stethPaths, ...jitoPaths];
+  const jitoPaths = paths.filter(p => p.asset === 'JitoSOL').sort((a, b) => a.costPct - b.costPct);
+  const sortedStaking = [...stethPaths, ...jitoPaths];
+  const sortedOfframp = offrampPaths.sort((a, b) => a.costPct - b.costPct);
 
-  // Print each path
-  for (const path of sorted) {
-    printPath(path);
+  // Print off-ramp paths first (primary use case)
+  if (sortedOfframp.length > 0) {
+    console.log(`  ${'═'.repeat(50)}`);
+    console.log(`  OFF-RAMP: USDC → Fiat`);
+    console.log(`  ${'═'.repeat(50)}\n`);
+    for (const path of sortedOfframp) printPath(path);
   }
 
-  // Summary table
-  printSummary(usdcAmount, sorted, marketLines);
+  // Print staking paths
+  if (sortedStaking.length > 0) {
+    console.log(`  ${'═'.repeat(50)}`);
+    console.log(`  DEPLOY: USDC → Staked Assets`);
+    console.log(`  ${'═'.repeat(50)}\n`);
+    for (const path of sortedStaking) printPath(path);
+  }
+
+  // Summary table (all paths together)
+  const allPaths = [...sortedOfframp, ...sortedStaking];
+  printSummary(usdcAmount, allPaths, marketLines);
 }

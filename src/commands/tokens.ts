@@ -195,6 +195,7 @@ export async function tokensCommand(network: Network) {
   console.log(`      CLI name: usdc-base`);
   console.log(`      Address:  ${baseTokensCfg.USDC}`);
   console.log(`      Decimals: ${baseTokensCfg.USDC_DECIMALS}`);
+  console.log(`      Used by:  Peer P2P off-ramp (deposit/withdraw USDC on Base)`);
   printSupplyLine(baseUsdcSupply, 'USDC', 1);
   console.log(`      Explorer: ${explorer.base}/token/${baseTokensCfg.USDC}`);
 

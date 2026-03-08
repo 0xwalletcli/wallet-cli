@@ -1,12 +1,13 @@
 /**
- * Peer deposit management commands
+ * Peer off-ramp position management (internal implementation)
  *
- * Manages P2P USDC deposits on Base chain via Peer.
- * LP model: deposit USDC → buyers pay fiat via Venmo/Zelle/CashApp/Revolut.
+ * Manages P2P USDC positions on Base chain via Peer.
+ * User locks USDC → buyers pay fiat via Venmo/Zelle/CashApp/Revolut → escrow releases.
+ * Called from `wallet withdraw` commands.
  */
 
 import { resolveSigner } from '../signers/index.js';
-import { formatToken } from '../lib/format.js';
+import { formatToken, formatUSD } from '../lib/format.js';
 import { confirm, validateAmount, warnDryRun } from '../lib/prompt.js';
 
 // ── Supported platforms ─────────────────────────────────
@@ -36,16 +37,16 @@ export async function depositPlatformsCommand() {
   }
 
   console.log('  └─────────────────┴──────────────────────────────────────┴─────────────────────┘');
-  console.log('\n  How it works:');
-  console.log('    1. You deposit USDC into Peer escrow on Base');
-  console.log('    2. Buyers find your deposit on peer.xyz');
+  console.log('\n  How off-ramp works (USDC → fiat):');
+  console.log('    1. You lock USDC into Peer escrow on Base');
+  console.log('    2. Buyers find your position on peer.xyz');
   console.log('    3. Buyer pays you fiat via your selected platform(s)');
   console.log('    4. Buyer proves payment with zkTLS → escrow releases USDC to buyer');
   console.log('    5. You keep the fiat + your spread\n');
-  console.log('  Setup example:');
-  console.log('    wallet deposit 1000 --run     # select Venmo + Zelle, set 2% spread');
-  console.log('    wallet deposit list            # view your active deposits');
-  console.log('    wallet deposit liquidity 100   # see what buyers see\n');
+  console.log('  Example:');
+  console.log('    wallet withdraw 1000 --run         # lock USDC, select platforms + spread');
+  console.log('    wallet withdraw list                # view your active positions');
+  console.log('    wallet withdraw liquidity 1000      # check off-ramp liquidity\n');
 }
 
 // ── List deposits ───────────────────────────────────────
@@ -54,7 +55,7 @@ export async function depositListCommand(showClosed = false) {
   const { listDeposits } = await import('../providers/offramp/peer.js');
   const { getPlatformLabel } = await import('../lib/peer.js');
 
-  console.log(`  Fetching ${showClosed ? 'closed' : 'active'} deposits from Peer...\n`);
+  console.log(`  Fetching ${showClosed ? 'closed' : 'active'} positions from Peer...\n`);
 
   const deposits = await listDeposits();
   const filtered = showClosed
@@ -62,8 +63,8 @@ export async function depositListCommand(showClosed = false) {
     : deposits.filter(d => d.accepting || Number(d.remaining.replace(/,/g, '')) > 0);
 
   if (filtered.length === 0) {
-    console.log(`  No ${showClosed ? 'closed' : 'active'} deposits found.\n`);
-    console.log('  Create one: wallet deposit <amount>\n');
+    console.log(`  No ${showClosed ? 'closed' : 'active'} positions found.\n`);
+    console.log('  Create one: wallet withdraw <amount> --run\n');
     return;
   }
 
@@ -102,40 +103,35 @@ export async function depositListCommand(showClosed = false) {
 
 export async function depositLiquidityCommand(amountStr: string) {
   validateAmount(amountStr);
-  const { getLiquidity } = await import('../providers/offramp/peer.js');
-  const { getPlatformLabel, SUPPORTED_PLATFORMS } = await import('../lib/peer.js');
+  const { fetchPeerLiquidity } = await import('./quote.js');
 
-  const signer = await resolveSigner();
-  const account = await signer.getEvmAccount();
+  console.log(`  Available USDC to buy with $${amountStr} fiat...\n`);
 
-  console.log(`  Fetching orderbook liquidity for $${amountStr}...\n`);
+  const peer = await fetchPeerLiquidity(amountStr);
 
-  const quote = await getLiquidity({
-    amount: amountStr,
-    platforms: [...SUPPORTED_PLATFORMS],
-    address: account.address,
-  });
-
-  if (!quote || !quote.quotes || quote.quotes.length === 0) {
-    console.log('  No liquidity available for this amount.\n');
+  if (peer.totalUsdc === 0 || peer.byPlatform.length === 0) {
+    console.log('  No USDC available to buy right now.\n');
+    console.log('  Peer liquidity is P2P — availability changes in real-time.\n');
     return;
   }
 
-  console.log('  ┌─────────────────────┬──────────────┬──────────┬──────────────┐');
-  console.log('  │ Payment Method      │ You Receive  │ Spread   │ Available    │');
-  console.log('  ├─────────────────────┼──────────────┼──────────┼──────────────┤');
+  console.log('  ┌─────────────────────┬──────────────────┬────────────────┬──────────┐');
+  console.log('  │ Payment Method      │ Available USDC   │ Best Price     │ Sellers  │');
+  console.log('  ├─────────────────────┼──────────────────┼────────────────┼──────────┤');
 
-  for (const q of quote.quotes) {
-    const method = getPlatformLabel(q.paymentPlatform || '?').padEnd(19);
-    const receive = (`$${Number(q.fiatAmount || amountStr).toFixed(2)}`).padStart(12);
-    const spread = q.spread ? `${(Number(q.spread) * 100).toFixed(2)}%`.padStart(8) : '   —    ';
-    const avail = q.availableLiquidity
-      ? formatToken(Number(q.availableLiquidity) / 1e6, 2).padStart(12)
-      : '         —  ';
-    console.log(`  │ ${method} │ ${receive} │ ${spread} │ ${avail} │`);
+  for (const p of peer.byPlatform) {
+    const label = (p.platform.charAt(0).toUpperCase() + p.platform.slice(1)).padEnd(19);
+    const avail = formatUSD(p.totalUsdc, 0).padStart(16);
+    const price = `${formatToken(p.bestSpread, 2)}% markup`.padStart(14);
+    const sellers = String(p.quoteCount).padStart(8);
+    console.log(`  │ ${label} │ ${avail} │ ${price} │ ${sellers} │`);
   }
 
-  console.log('  └─────────────────────┴──────────────┴──────────┴──────────────┘');
+  console.log('  └─────────────────────┴──────────────────┴────────────────┴──────────┘');
+  console.log(`\n  ${formatUSD(peer.totalUsdc, 0)} USDC available from ${peer.byPlatform.reduce((s, p) => s + p.quoteCount, 0)} sellers`);
+  if (peer.bestSpread != null) {
+    console.log(`  Best price: ${formatToken(peer.bestSpread, 2)}% above market (you pay $${(Number(amountStr) * (1 + peer.bestSpread / 100)).toFixed(2)} for ${formatUSD(Number(amountStr), 0)} USDC)`);
+  }
   console.log('');
 }
 
@@ -153,7 +149,7 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean) {
   const account = await signer.getEvmAccount();
 
   if (dryRun) warnDryRun();
-  console.log(`  Create Deposit: ${amountStr} USDC on Peer`);
+  console.log(`  Off-ramp: ${amountStr} USDC → fiat via Peer`);
   console.log(`  Chain: Base mainnet`);
   console.log(`  From: ${account.address}\n`);
 
@@ -228,11 +224,11 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean) {
   }
 
   // Summary
-  console.log('\n  ── Deposit Summary ──');
-  console.log(`  Amount:     ${amountStr} USDC`);
+  console.log('\n  ── Off-ramp Summary ──');
+  console.log(`  Lock:       ${amountStr} USDC in escrow`);
   console.log(`  Platforms:  ${selectedPlatforms.map(getPlatformLabel).join(', ')}`);
-  console.log(`  Spread:     ${spreadPct.toFixed(2)}%`);
-  console.log(`  Buyer pays: $${(Number(amountStr) * (1 + spreadPct / 100)).toFixed(2)} for ${amountStr} USDC`);
+  console.log(`  Spread:     ${spreadPct.toFixed(2)}% (your profit)`);
+  console.log(`  You receive: ~$${(Number(amountStr) * (1 + spreadPct / 100)).toFixed(2)} fiat when buyer pays`);
   console.log(`  Chain:      Base mainnet\n`);
 
   if (dryRun) {
@@ -240,7 +236,7 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean) {
     return;
   }
 
-  if (!await confirm('Create deposit?')) {
+  if (!await confirm('Lock USDC and create position?')) {
     console.log('  Cancelled.\n');
     return;
   }
@@ -252,17 +248,17 @@ export async function depositCreateCommand(amountStr: string, dryRun: boolean) {
       depositData,
       spreadPct,
     });
-    console.log(`  Deposit created!`);
+    console.log(`  Position created! USDC locked in escrow.`);
     console.log(`  TX: ${result.hash}`);
     console.log(`  URL: https://basescan.org/tx/${result.hash}`);
     if (result.depositDetails?.length > 0) {
       for (const det of result.depositDetails) {
-        console.log(`  Deposit ID: ${det.depositId || '(pending)'}`);
+        console.log(`  Position ID: ${det.depositId || '(pending)'}`);
       }
     }
     console.log('');
   } catch (err: any) {
-    console.error(`  Deposit creation failed: ${err.message}\n`);
+    console.error(`  Off-ramp failed: ${err.message}\n`);
   }
 }
 
@@ -276,7 +272,7 @@ export async function depositAddFundsCommand(depositId: string, amountStr: strin
   const signer = await resolveSigner();
   const account = await signer.getEvmAccount();
 
-  console.log(`  Add Funds: ${amountStr} USDC to deposit #${depositId}`);
+  console.log(`  Add Funds: ${amountStr} USDC to position #${depositId}`);
   console.log(`  Chain: Base mainnet`);
   console.log(`  From: ${account.address}\n`);
 
@@ -295,7 +291,7 @@ export async function depositAddFundsCommand(depositId: string, amountStr: strin
     return;
   }
 
-  if (!await confirm(`Add ${amountStr} USDC to deposit #${depositId}?`)) {
+  if (!await confirm(`Add ${amountStr} USDC to position #${depositId}?`)) {
     console.log('  Cancelled.\n');
     return;
   }
@@ -316,7 +312,7 @@ export async function depositRemoveFundsCommand(depositId: string, amountStr: st
   validateAmount(amountStr);
   const { removeFunds } = await import('../providers/offramp/peer.js');
 
-  console.log(`  Remove Funds: ${amountStr} USDC from deposit #${depositId}`);
+  console.log(`  Remove Funds: ${amountStr} USDC from position #${depositId}`);
   console.log(`  Chain: Base mainnet\n`);
 
   if (dryRun) {
@@ -325,7 +321,7 @@ export async function depositRemoveFundsCommand(depositId: string, amountStr: st
     return;
   }
 
-  if (!await confirm(`Remove ${amountStr} USDC from deposit #${depositId}?`)) {
+  if (!await confirm(`Remove ${amountStr} USDC from position #${depositId}?`)) {
     console.log('  Cancelled.\n');
     return;
   }
@@ -345,9 +341,9 @@ export async function depositRemoveFundsCommand(depositId: string, amountStr: st
 export async function depositCloseCommand(depositId: string, dryRun: boolean) {
   const { withdrawDeposit } = await import('../providers/offramp/peer.js');
 
-  console.log(`  Close Deposit: #${depositId}`);
+  console.log(`  Close Position: #${depositId}`);
   console.log(`  Chain: Base mainnet`);
-  console.log('  This will withdraw all remaining funds from the deposit.\n');
+  console.log('  This will reclaim all remaining USDC from the position.\n');
 
   if (dryRun) {
     warnDryRun();
@@ -355,18 +351,18 @@ export async function depositCloseCommand(depositId: string, dryRun: boolean) {
     return;
   }
 
-  if (!await confirm(`Close deposit #${depositId} and withdraw all funds?`)) {
+  if (!await confirm(`Close position #${depositId} and reclaim USDC?`)) {
     console.log('  Cancelled.\n');
     return;
   }
 
   try {
     const hash = await withdrawDeposit(depositId);
-    console.log(`  Deposit closed!`);
+    console.log(`  Position closed!`);
     console.log(`  TX: ${hash}`);
     console.log(`  URL: https://basescan.org/tx/${hash}\n`);
   } catch (err: any) {
-    console.error(`  Close deposit failed: ${err.message}\n`);
+    console.error(`  Close position failed: ${err.message}\n`);
   }
 }
 
@@ -376,7 +372,7 @@ export async function depositPauseResumeCommand(depositId: string, accepting: bo
   const { setAcceptingIntents } = await import('../providers/offramp/peer.js');
   const action = accepting ? 'Resume' : 'Pause';
 
-  console.log(`  ${action} Deposit: #${depositId}`);
+  console.log(`  ${action} Position: #${depositId}`);
   console.log(`  Chain: Base mainnet\n`);
 
   if (dryRun) {
@@ -385,14 +381,14 @@ export async function depositPauseResumeCommand(depositId: string, accepting: bo
     return;
   }
 
-  if (!await confirm(`${action} deposit #${depositId}?`)) {
+  if (!await confirm(`${action} position #${depositId}?`)) {
     console.log('  Cancelled.\n');
     return;
   }
 
   try {
     const hash = await setAcceptingIntents(depositId, accepting);
-    console.log(`  Deposit ${accepting ? 'resumed' : 'paused'}!`);
+    console.log(`  Position ${accepting ? 'resumed' : 'paused'}!`);
     console.log(`  TX: ${hash}`);
     console.log(`  URL: https://basescan.org/tx/${hash}\n`);
   } catch (err: any) {
@@ -405,7 +401,7 @@ export async function depositPauseResumeCommand(depositId: string, accepting: bo
 export async function depositHistoryCommand() {
   const { getIntentHistory } = await import('../providers/offramp/peer.js');
 
-  console.log('  Fetching deposit history from Peer...\n');
+  console.log('  Fetching off-ramp history from Peer...\n');
 
   const history = await getIntentHistory();
   if (history.length === 0) {

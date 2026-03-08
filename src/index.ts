@@ -432,49 +432,81 @@ program
     await cancelCommand(orderId, getNetwork(program));
   }));
 
-// wallet deposit [args...] — Peer P2P deposit management on Base
+// wallet deposit [args...] — on-ramp (fiat → USDC)
 program
   .command('deposit [args...]')
-  .description('Manage P2P USDC deposits on Base via Peer')
+  .description('Buy USDC with fiat (on-ramp)')
   .addHelpText('after', `
   Usage:
-    deposit platforms                    Show supported payment methods + handle formats
-    deposit <amount>                     Create a new USDC deposit (interactive — platforms, spreads)
-    deposit list                         List active deposits
-    deposit list closed                  List closed/withdrawn deposits
-    deposit add <depositId> <amount>     Add funds to existing deposit
-    deposit remove <depositId> <amount>  Remove funds from deposit
-    deposit close <depositId>            Fully withdraw a deposit
-    deposit pause <depositId>            Stop accepting new buyers
-    deposit resume <depositId>           Resume accepting buyers
-    deposit liquidity <amount>           Preview orderbook — what buyers see
-    deposit history                      Recent intents / buyer activity
+    deposit platforms             Supported payment platforms for buying USDC
+    deposit liquidity <amount>    Available USDC you can buy right now
 
-  Peer: Decentralized P2P off-ramp on Base chain.
-  You deposit USDC → buyers pay you fiat via Venmo/Zelle/CashApp/Revolut.
-  Non-custodial, no KYC. Requires an EVM signer (env key, WalletConnect, or browser).
+  Buy USDC via Peer P2P: pay fiat via Venmo/Zelle/CashApp/Revolut → receive USDC.
+  Decentralized, non-custodial, no KYC.
 
   Examples:
-    wallet deposit platforms             See supported platforms + handle formats
-    wallet deposit 500                   Create $500 deposit (select platforms + spread)
-    wallet deposit list                  View active deposits table
-    wallet deposit liquidity 100         Preview orderbook for $100
-    wallet deposit add 42 200 --run      Add $200 to deposit #42
-    wallet deposit close 42 --run        Close deposit #42
+    wallet deposit platforms         See supported platforms
+    wallet deposit liquidity 1000    Check available USDC to buy
 `)
   .action(timed(async (args: string[]) => {
     if (args[0] === 'platforms') {
       const { depositPlatformsCommand } = await import('./commands/deposit.js');
       await depositPlatformsCommand();
-    } else if (args[0] === 'list') {
-      const { depositListCommand } = await import('./commands/deposit.js');
-      await depositListCommand(args[1] === 'closed');
     } else if (args[0] === 'liquidity' && args[1]) {
       const { depositLiquidityCommand } = await import('./commands/deposit.js');
       await depositLiquidityCommand(args[1]);
+    } else {
+      console.error('  Usage: wallet deposit platforms              Supported payment platforms');
+      console.error('         wallet deposit liquidity <amount>     Available USDC to buy');
+      console.error('         wallet deposit --help                 Full help');
+      process.exit(1);
+    }
+  }));
+
+// wallet withdraw [args...] — off-ramp (USDC → fiat)
+program
+  .command('withdraw [args...]')
+  .description('Convert USDC to fiat (off-ramp) via Spritz ACH or Peer P2P')
+  .addHelpText('after', `
+  Usage:
+    withdraw <amount>                Off-ramp USDC to fiat (Spritz ACH or Peer P2P)
+    withdraw liquidity <amount>      Check available off-ramp liquidity
+    withdraw list [closed]           List your active Peer positions
+    withdraw add <positionId> <amt>  Add USDC to a Peer position
+    withdraw remove <posId> <amt>    Remove USDC from a position
+    withdraw close <positionId>      Close a position and reclaim USDC
+    withdraw pause <positionId>      Pause a position (stop accepting buyers)
+    withdraw resume <positionId>     Resume a position
+    withdraw platforms               Supported payment platforms (Peer)
+    withdraw accounts                Linked bank accounts (Spritz)
+    withdraw history                 Recent withdrawal activity
+
+  Providers:
+    Peer      — P2P off-ramp on Base (Venmo/Zelle/CashApp/Revolut). Non-custodial, no KYC.
+    Spritz    — USDC → bank via ACH (requires SPRITZ_API_KEY)
+
+  Examples:
+    wallet withdraw 1000 --run              Off-ramp $1000 USDC
+    wallet withdraw liquidity 5000          Check liquidity for $5K
+    wallet withdraw list                    View active positions
+    wallet withdraw close 42 --run          Close position #42
+`)
+  .action(timed(async (args: string[]) => {
+    if (args[0] === 'liquidity' && args[1] && !isNaN(Number(args[1]))) {
+      const { withdrawLiquidityCommand } = await import('./commands/withdraw.js');
+      await withdrawLiquidityCommand(args[1]);
+    } else if (args[0] === 'list') {
+      const { depositListCommand } = await import('./commands/deposit.js');
+      await depositListCommand(args[1] === 'closed');
+    } else if (args[0] === 'platforms') {
+      const { depositPlatformsCommand } = await import('./commands/deposit.js');
+      await depositPlatformsCommand();
     } else if (args[0] === 'history') {
-      const { depositHistoryCommand } = await import('./commands/deposit.js');
-      await depositHistoryCommand();
+      const { withdrawHistoryCommand } = await import('./commands/withdraw.js');
+      await withdrawHistoryCommand();
+    } else if (args[0] === 'accounts') {
+      const { withdrawAccountsCommand } = await import('./commands/withdraw.js');
+      await withdrawAccountsCommand();
     } else if (args[0] === 'add' && args[1] && args[2]) {
       checkAuditGate(getNetwork(program), getDryRun(program));
       const { depositAddFundsCommand } = await import('./commands/deposit.js');
@@ -497,62 +529,20 @@ program
       await depositPauseResumeCommand(args[1], true, getDryRun(program));
     } else if (args.length === 1 && !isNaN(Number(args[0]))) {
       checkAuditGate(getNetwork(program), getDryRun(program));
-      const { depositCreateCommand } = await import('./commands/deposit.js');
-      await depositCreateCommand(args[0], getDryRun(program));
-    } else {
-      console.error('  Usage: wallet deposit platforms              Show supported payment methods');
-      console.error('         wallet deposit <amount>               Create a new deposit');
-      console.error('         wallet deposit list [closed]          List deposits');
-      console.error('         wallet deposit liquidity <amount>     Preview orderbook');
-      console.error('         wallet deposit add <id> <amount>      Add funds');
-      console.error('         wallet deposit remove <id> <amount>   Remove funds');
-      console.error('         wallet deposit close <id>             Close + withdraw');
-      console.error('         wallet deposit pause|resume <id>      Pause/resume');
-      console.error('         wallet deposit history                Buyer activity');
-      console.error('         wallet deposit --help                 Full help');
-      process.exit(1);
-    }
-  }));
-
-// wallet withdraw [args...]
-program
-  .command('withdraw [args...]')
-  .description('Withdraw USDC to bank account via off-ramp provider')
-  .addHelpText('after', `
-  Usage:
-    withdraw <amount>          Withdraw USDC to linked bank account
-    withdraw accounts          List linked accounts from provider
-    withdraw history           Recent withdrawals
-
-  Providers:
-    Spritz Finance  — USDC -> bank via ACH (requires SPRITZ_API_KEY)
-
-  Configure: wallet config set offramp spritz
-  For P2P off-ramp via Peer, use: wallet deposit --help
-
-  Examples:
-    wallet withdraw 500
-    wallet withdraw 1000 --run
-    wallet withdraw accounts
-    wallet withdraw history
-`)
-  .action(timed(async (args: string[]) => {
-    if (args[0] === 'history') {
-      const { withdrawHistoryCommand } = await import('./commands/withdraw.js');
-      await withdrawHistoryCommand();
-    } else if (args[0] === 'accounts') {
-      const { withdrawAccountsCommand } = await import('./commands/withdraw.js');
-      await withdrawAccountsCommand();
-    } else if (args.length === 1 && !isNaN(Number(args[0]))) {
-      checkAuditGate(getNetwork(program), getDryRun(program));
       const { withdrawCommand } = await import('./commands/withdraw.js');
       await withdrawCommand(args[0], getNetwork(program), getDryRun(program));
     } else {
-      console.error('  Usage: wallet withdraw <amount>');
-      console.error('         wallet withdraw accounts');
-      console.error('         wallet withdraw history');
-      console.error('         wallet withdraw --help');
-      console.error('  For P2P deposits: wallet deposit --help');
+      console.error('  Usage: wallet withdraw <amount>              Off-ramp USDC to fiat');
+      console.error('         wallet withdraw liquidity <amount>    Check off-ramp liquidity');
+      console.error('         wallet withdraw list [closed]         List Peer positions');
+      console.error('         wallet withdraw add <id> <amount>     Add USDC to position');
+      console.error('         wallet withdraw remove <id> <amount>  Remove USDC from position');
+      console.error('         wallet withdraw close <id>            Close position');
+      console.error('         wallet withdraw pause|resume <id>     Pause/resume position');
+      console.error('         wallet withdraw platforms             Supported platforms');
+      console.error('         wallet withdraw accounts              Linked bank accounts');
+      console.error('         wallet withdraw history               Recent activity');
+      console.error('         wallet withdraw --help                Full help');
       process.exit(1);
     }
   }));

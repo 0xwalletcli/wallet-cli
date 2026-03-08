@@ -392,12 +392,54 @@ export async function auditCommand(network: Network) {
       const accounts = await withTimeout(client.bankAccount.list(), TIMEOUT);
       return { ms: Date.now() - start, accounts: accounts.length };
     })() : Promise.resolve(null),
-    // Peer API (P2P off-ramp on Base)
+    // Peer API + liquidity check (P2P off-ramp on Base)
+    // Peer API + liquidity check — use exact-token quote as health probe
     peerConfigured ? (async () => {
       const start = Date.now();
-      const res = await withTimeout(fetch('https://api.zkp2p.xyz/v1/health'), TIMEOUT);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return { ms: Date.now() - start };
+      // quotesToReturn=50 to see full orderbook (default only returns best quote)
+      const quoteRes = await withTimeout(fetch('https://api.zkp2p.xyz/v2/quote/exact-token?quotesToReturn=50', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paymentPlatforms: ['venmo', 'zelle', 'cashapp', 'revolut'],
+          fiatCurrency: 'USD',
+          destinationChainId: 8453,
+          destinationToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          exactTokenAmount: '5000000000', // 5,000 USDC (6 decimals)
+          user: '0x0000000000000000000000000000000000000001',
+          recipient: '0x0000000000000000000000000000000000000001',
+        }),
+      }), TIMEOUT);
+      const ms = Date.now() - start;
+      let liquidity: number | null = null;
+      let liquidityByPlatform: Record<string, number> = {};
+
+      if (quoteRes.ok) {
+        const quoteData = await quoteRes.json() as any;
+        const quotes = quoteData?.responseObject?.quotes || quoteData?.quotes || [];
+        if (Array.isArray(quotes) && quotes.length > 0) {
+          const byPlatform: Record<string, number> = {};
+          for (const q of quotes) {
+            // Each quote has tokenAmount (raw USDC) representing fillable liquidity
+            const tokenAmt = q.tokenAmount ? Number(q.tokenAmount) / 1e6 : 0;
+            const platform = q.paymentMethod || q.paymentPlatform || 'unknown';
+            byPlatform[platform] = (byPlatform[platform] || 0) + tokenAmt;
+          }
+          liquidity = Object.values(byPlatform).reduce((a, b) => a + b, 0);
+          liquidityByPlatform = byPlatform;
+        }
+      } else {
+        // JSON 404 = "no quotes found" (API alive, no liquidity) vs real error
+        try {
+          const body = await quoteRes.json() as any;
+          if (body?.message !== 'No quotes found') throw new Error(`HTTP ${quoteRes.status}`);
+          liquidity = 0;
+        } catch (e) {
+          if (e instanceof Error && e.message.startsWith('HTTP')) throw e;
+          throw new Error(`HTTP ${quoteRes.status}`);
+        }
+      }
+      return { ms, liquidity, liquidityByPlatform };
     })() : Promise.resolve(null),
   ]);
 
@@ -649,6 +691,24 @@ export async function auditCommand(network: Network) {
     } else {
       printCheck('Peer API', 'ok', `OK (${peerCheck.value.ms}ms)`);
       record('Peer API', 'ok', `OK (${peerCheck.value.ms}ms)`);
+      // Liquidity check (per-platform breakdown)
+      const liq = peerCheck.value.liquidity;
+      if (liq != null) {
+        const liqStatus = liq > 1000 ? 'ok' : liq > 0 ? 'warn' : 'fail';
+        const byPlatform = peerCheck.value.liquidityByPlatform || {};
+        const platformParts = Object.entries(byPlatform)
+          .filter(([, v]) => v > 0)
+          .sort(([, a], [, b]) => b - a)
+          .map(([p, v]) => `${p}: $${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`);
+        const liqStr = liq > 0
+          ? `$${liq.toLocaleString('en-US', { maximumFractionDigits: 0 })} USDC available`
+          : 'No liquidity found';
+        printCheck('Peer liquidity', liqStatus, liqStr);
+        if (platformParts.length > 0) {
+          printDetail('By platform:', platformParts.join(', '));
+        }
+        record('Peer liquidity', liqStatus, liqStr);
+      }
     }
   } else {
     printCheck('Peer API', 'fail', peerCheck.reason?.message || 'failed');

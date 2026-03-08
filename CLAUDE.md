@@ -92,7 +92,7 @@ src/
     wrap.ts             — wrap/unwrap native assets: ETH <-> WETH (Ethereum), SOL <-> WSOL (Solana), partial unwrap for WETH
     approve.ts          — ERC-20 token approvals
     audit.ts            — comprehensive audit: prices (ETH, SOL, WSOL-ETH, USDC peg, stETH ratio), pools (Lido, Jito), APIs (CoW, Jupiter, deBridge, Uniswap, LI.FI, Etherscan), RPCs, netguard
-    quote.ts            — compare up to 6 DeFi paths (CoW/Uniswap/LI.FI+Lido, deBridge/LI.FI+Jito) for USDC -> staked assets, with yield projections per path
+    quote.ts            — compare up to 8 paths: 6 DeFi staking (CoW/Uniswap/LI.FI+Lido, deBridge/LI.FI+Jito) + 2 off-ramp (Peer P2P with liquidity check, Spritz ACH). Yield projections for staking, net fiat for off-ramp
     zap.ts              — one-step USDC -> staked asset: `zap <amt> usdc steth` (multi-provider swap+Lido) or `zap <amt> usdc jitosol` (multi-provider bridge+Jito, 2 paths)
     transactions.ts     — recent transaction history, command: `wallet txs` (Etherscan Ethereum + Base + Solana in parallel, resolves known Solana token mints)
     tokens.ts           — supported token reference (addresses, decimals, explorer links, includes WSOL)
