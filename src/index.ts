@@ -459,7 +459,7 @@ program
       await depositPlatformsCommand();
     } else if (args[0] === 'liquidity' && args[1]) {
       const { depositLiquidityCommand } = await import('./commands/deposit.js');
-      await depositLiquidityCommand(args[1]);
+      await depositLiquidityCommand(args[1], cmdOpts.from);
     } else if (args.length >= 1 && !isNaN(Number(args[0]))) {
       checkAuditGate(getNetwork(program), getDryRun(program));
       const { depositBuyCommand } = await import('./commands/deposit.js');
@@ -508,7 +508,7 @@ program
   .action(timed(async (args: string[], cmdOpts: any) => {
     if (args[0] === 'liquidity' && args[1] && !isNaN(Number(args[1]))) {
       const { withdrawLiquidityCommand } = await import('./commands/withdraw.js');
-      await withdrawLiquidityCommand(args[1]);
+      await withdrawLiquidityCommand(args[1], cmdOpts.to);
     } else if (args[0] === 'list') {
       const { depositListCommand } = await import('./commands/deposit.js');
       await depositListCommand(args[1] === 'closed');

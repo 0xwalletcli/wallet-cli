@@ -101,13 +101,25 @@ export async function depositListCommand(showClosed = false) {
 
 // ── Liquidity preview ───────────────────────────────────
 
-export async function depositLiquidityCommand(amountStr: string) {
+export async function depositLiquidityCommand(amountStr: string, platformFilter?: string) {
   validateAmount(amountStr);
   const { fetchPeerLiquidity } = await import('./quote.js');
+  const { SUPPORTED_PLATFORMS, getPlatformLabel: getLabel } = await import('../lib/peer.js');
 
-  console.log(`  Available USDC to buy with $${amountStr} fiat...\n`);
+  let platforms: string[] | undefined;
+  if (platformFilter) {
+    const p = platformFilter.toLowerCase();
+    if (!SUPPORTED_PLATFORMS.includes(p as any)) {
+      console.error(`  Unknown platform: "${p}". Valid: ${SUPPORTED_PLATFORMS.join(', ')}`);
+      return;
+    }
+    platforms = [p];
+    console.log(`  Available USDC to buy with $${amountStr} fiat on ${getLabel(p)}...\n`);
+  } else {
+    console.log(`  Available USDC to buy with $${amountStr} fiat...\n`);
+  }
 
-  const peer = await fetchPeerLiquidity(amountStr);
+  const peer = await fetchPeerLiquidity(amountStr, platforms);
 
   if (peer.totalUsdc === 0 || peer.byPlatform.length === 0) {
     console.log('  No USDC available to buy right now.\n');

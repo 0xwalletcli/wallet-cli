@@ -180,16 +180,28 @@ export async function withdrawHistoryCommand(providerFlag?: string) {
   console.log('');
 }
 
-export async function withdrawLiquidityCommand(amountStr: string) {
+export async function withdrawLiquidityCommand(amountStr: string, platformFilter?: string) {
   validateAmount(amountStr);
   const { fetchPeerLiquidity } = await import('./quote.js');
   const { formatToken: fmtToken, formatUSD: fmtUSD } = await import('../lib/format.js');
+  const { SUPPORTED_PLATFORMS, getPlatformLabel } = await import('../lib/peer.js');
 
-  console.log(`\n  Off-ramp Liquidity: ${amountStr} USDC → Fiat`);
+  let platforms: string[] | undefined;
+  if (platformFilter) {
+    const p = platformFilter.toLowerCase();
+    if (!SUPPORTED_PLATFORMS.includes(p as any)) {
+      console.error(`  Unknown platform: "${p}". Valid: ${SUPPORTED_PLATFORMS.join(', ')}`);
+      return;
+    }
+    platforms = [p];
+    console.log(`\n  Off-ramp Liquidity: ${amountStr} USDC → ${getPlatformLabel(p)}`);
+  } else {
+    console.log(`\n  Off-ramp Liquidity: ${amountStr} USDC → Fiat`);
+  }
   console.log('  Checking Peer P2P orderbook...\n');
 
   try {
-    const peer = await fetchPeerLiquidity(amountStr);
+    const peer = await fetchPeerLiquidity(amountStr, platforms);
 
     if (peer.totalUsdc === 0 || peer.byPlatform.length === 0) {
       console.log('  No Peer liquidity available for this amount.\n');
