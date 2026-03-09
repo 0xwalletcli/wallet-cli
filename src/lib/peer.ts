@@ -48,7 +48,7 @@ export async function getPeerClient(): Promise<any> {
   _client = new Zkp2pClient({
     walletClient: walletClient as WalletClient,
     chainId: 8453,
-    apiKey: 'wallet-cli',
+    ...(process.env.PEER_API_KEY ? { apiKey: process.env.PEER_API_KEY } : {}),
     runtimeEnv: 'production',
   });
 

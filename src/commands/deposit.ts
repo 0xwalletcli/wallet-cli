@@ -7,7 +7,7 @@
  */
 
 import { resolveSigner } from '../signers/index.js';
-import { formatToken, formatUSD } from '../lib/format.js';
+import { formatToken, formatUSD, link } from '../lib/format.js';
 import { confirm, validateAmount, warnDryRun } from '../lib/prompt.js';
 
 // ── Supported platforms ─────────────────────────────────
@@ -219,70 +219,90 @@ export async function depositBuyCommand(amountStr: string, dryRun: boolean, plat
     return;
   }
 
-  // Collapse quotes by platform
-  const byPlatform: Record<string, { count: number; bestFiat: number; worstFiat: number; bestMarkup: number; worstMarkup: number }> = {};
-  for (const q of quotes) {
-    const p = q.paymentMethod || q.paymentPlatform || '?';
-    const fiat = Number(q.fiatAmount || 0) / 1e6;
-    const markup = q.conversionRate ? rateToSpread(q.conversionRate) : 0;
-    if (!byPlatform[p]) {
-      byPlatform[p] = { count: 0, bestFiat: fiat, worstFiat: fiat, bestMarkup: markup, worstMarkup: markup };
-    }
-    byPlatform[p].count++;
-    if (fiat < byPlatform[p].bestFiat) { byPlatform[p].bestFiat = fiat; byPlatform[p].bestMarkup = markup; }
-    if (fiat > byPlatform[p].worstFiat) { byPlatform[p].worstFiat = fiat; byPlatform[p].worstMarkup = markup; }
+  // Deduplicate by seller address — keep cheapest position per seller
+  const sorted = [...quotes].sort((a, b) => Number(a.fiatAmount || 0) - Number(b.fiatAmount || 0));
+  const seen = new Set<string>();
+  const uniqueSellers: typeof quotes = [];
+  for (const q of sorted) {
+    const addr = (q.payeeAddress || '').toLowerCase();
+    if (seen.has(addr)) continue;
+    seen.add(addr);
+    uniqueSellers.push(q);
   }
 
   const tokenAmt = formatToken(Number(quotes[0].tokenAmount || 0) / 1e6, 2);
-  const platformKeys = Object.keys(byPlatform);
-
-  console.log(`\n  ${quotes.length} sellers across ${platformKeys.length} platform${platformKeys.length > 1 ? 's' : ''} for ${tokenAmt} USDC:\n`);
-  console.log('  ┌─────────────────────┬──────────────────┬───────────────┬──────────┐');
-  console.log('  │ Platform            │ Best price       │ Markup        │ Sellers  │');
-  console.log('  ├─────────────────────┼──────────────────┼───────────────┼──────────┤');
-
-  for (const p of platformKeys) {
-    const info = byPlatform[p];
-    const label = getPlatformLabel(p).padEnd(19);
-    const best = formatUSD(info.bestFiat).padStart(16);
-    const markupStr = info.bestMarkup === info.worstMarkup
-      ? `${formatToken(info.bestMarkup, 2)}%`
-      : `${formatToken(info.bestMarkup, 2)}-${formatToken(info.worstMarkup, 2)}%`;
-    const markup = markupStr.padStart(13);
-    const sellers = String(info.count).padStart(8);
-    console.log(`  │ ${label} │ ${best} │ ${markup} │ ${sellers} │`);
-  }
-
-  console.log('  └─────────────────────┴──────────────────┴───────────────┴──────────┘');
 
   if (dryRun) {
+    // Dry-run: collapsed summary by platform
+    const byPlatform: Record<string, { count: number; bestFiat: number; worstFiat: number; bestMarkup: number; worstMarkup: number }> = {};
+    for (const q of uniqueSellers) {
+      const p = q.paymentMethod || q.paymentPlatform || '?';
+      const fiat = Number(q.fiatAmount || 0) / 1e6;
+      const markup = q.conversionRate ? rateToSpread(q.conversionRate) : 0;
+      if (!byPlatform[p]) {
+        byPlatform[p] = { count: 0, bestFiat: fiat, worstFiat: fiat, bestMarkup: markup, worstMarkup: markup };
+      }
+      byPlatform[p].count++;
+      if (fiat < byPlatform[p].bestFiat) { byPlatform[p].bestFiat = fiat; byPlatform[p].bestMarkup = markup; }
+      if (fiat > byPlatform[p].worstFiat) { byPlatform[p].worstFiat = fiat; byPlatform[p].worstMarkup = markup; }
+    }
+    const platformKeys = Object.keys(byPlatform);
+
+    console.log(`\n  ${uniqueSellers.length} seller${uniqueSellers.length !== 1 ? 's' : ''} for ${tokenAmt} USDC:\n`);
+    console.log('  ┌─────────────────────┬──────────────────┬───────────────┬──────────┐');
+    console.log('  │ Platform            │ Best price       │ Markup        │ Sellers  │');
+    console.log('  ├─────────────────────┼──────────────────┼───────────────┼──────────┤');
+
+    for (const p of platformKeys) {
+      const info = byPlatform[p];
+      const label = getPlatformLabel(p).padEnd(19);
+      const best = formatUSD(info.bestFiat).padStart(16);
+      const markupStr = info.bestMarkup === info.worstMarkup
+        ? `${formatToken(info.bestMarkup, 2)}%`
+        : `${formatToken(info.bestMarkup, 2)}-${formatToken(info.worstMarkup, 2)}%`;
+      const markup = markupStr.padStart(13);
+      const sellers = String(info.count).padStart(8);
+      console.log(`  │ ${label} │ ${best} │ ${markup} │ ${sellers} │`);
+    }
+
+    console.log('  └─────────────────────┴──────────────────┴───────────────┴──────────┘');
     console.log('\n  [DRY RUN] Skipping execution. Add --run to signal intent and buy.\n');
     return;
   }
 
-  // Show individual sellers for selection
-  console.log(`\n  Select a seller:\n`);
-  for (let i = 0; i < quotes.length; i++) {
-    const q = quotes[i];
+  // --run: show individual sellers for selection
+  const topQuotes = uniqueSellers.slice(0, 5);
+
+  console.log(`\n  ${uniqueSellers.length} seller${uniqueSellers.length !== 1 ? 's' : ''} for ${tokenAmt} USDC (showing top ${topQuotes.length}):\n`);
+  for (let i = 0; i < topQuotes.length; i++) {
+    const q = topQuotes[i];
     const label = getPlatformLabel(q.paymentMethod || q.paymentPlatform || '?');
     const fiat = formatUSD(Number(q.fiatAmount || 0) / 1e6);
     const markup = q.conversionRate ? `${formatToken(rateToSpread(q.conversionRate), 2)}%` : '?';
-    console.log(`    ${i + 1}. ${label}  ${fiat}  (${markup} markup)`);
+    const successBps = Number(q.depositSuccessRateBps || 0);
+    const volume = successBps > 0 ? `${(successBps / 100).toFixed(0)}% success` : 'new';
+    const shortAddr = q.payeeAddress ? `${q.payeeAddress.slice(0, 6)}…${q.payeeAddress.slice(-4)}` : '';
+    const addrDisplay = q.payeeAddress
+      ? link(`https://basescan.org/address/${q.payeeAddress}`, shortAddr)
+      : '';
+    console.log(`    ${i + 1}. ${fiat}  ${markup} markup  ${volume}  ${addrDisplay}  (${label})`);
   }
+  console.log(`    0. Cancel`);
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const choice = await new Promise<string>((resolve) => {
-    rl.question(`\n  Seller [1-${quotes.length}]: `, resolve);
+    rl.question(`\n  Seller [0-${topQuotes.length}]: `, resolve);
   });
   rl.close();
 
-  const idx = parseInt(choice.trim(), 10) - 1;
-  if (isNaN(idx) || idx < 0 || idx >= quotes.length) {
-    console.log('  Invalid selection. Cancelled.\n');
+  const idx = parseInt(choice.trim(), 10);
+  if (idx === 0 || isNaN(idx) || idx < 0 || idx > topQuotes.length) {
+    console.log('  Cancelled.\n');
     return;
   }
+  const selectedIdx = idx - 1;
 
-  const selected = quotes[idx];
+  const selected = topQuotes[selectedIdx];
   const intent = selected.intent;
 
   // Show summary
@@ -300,6 +320,15 @@ export async function depositBuyCommand(amountStr: string, dryRun: boolean, plat
     }
   }
   console.log(`  Chain:       Base mainnet\n`);
+
+  // Check for API key before prompting confirmation
+  if (!process.env.PEER_API_KEY) {
+    console.log('  PEER_API_KEY not set in .env — required for on-ramp buy orders.');
+    console.log('  Request an API key from the Peer team:');
+    console.log('    Discord:  https://discord.gg/h3rzP79jj3');
+    console.log('    Telegram: https://t.me/zk_p2p\n');
+    return;
+  }
 
   if (!await confirm('Signal intent and lock this trade?')) {
     console.log('  Cancelled.\n');
@@ -332,7 +361,14 @@ export async function depositBuyCommand(amountStr: string, dryRun: boolean, plat
     console.log(`    2. Proof is generated automatically via zkTLS`);
     console.log(`    3. USDC is released to your wallet once verified\n`);
   } catch (err: any) {
-    console.error(`  Signal intent failed: ${err.message}\n`);
+    const msg = err.message || '';
+    if (msg.includes('gatingServiceSignature') || msg.includes('Invalid API key') || msg.includes('verify/intent failed')) {
+      console.error('  Invalid or unauthorized PEER_API_KEY.');
+      console.error('  The on-ramp requires a valid API key from the Peer team.');
+      console.error('  Request one at: https://discord.gg/h3rzP79jj3 or https://t.me/zk_p2p\n');
+    } else {
+      console.error(`  Signal intent failed: ${msg}\n`);
+    }
   }
 }
 

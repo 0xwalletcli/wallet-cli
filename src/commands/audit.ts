@@ -674,8 +674,8 @@ export async function auditCommand(network: Network) {
       }
     }
   } else {
-    printCheck('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
-    record('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
+    printCheck('Spritz API', 'warn', `${spritzCheck.reason?.message || 'failed'} (optional — Peer P2P available)`);
+    record('Spritz API', 'warn', spritzCheck.reason?.message || 'failed');
   }
 
   // Peer (P2P off-ramp)
