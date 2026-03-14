@@ -41,6 +41,8 @@ const ALLOWED_HOSTS = new Set([
   'api.basescan.org',
   'basescan.org',
   'sepolia.basescan.org',
+  // Blockscout (free Base tx history — Etherscan V2 requires paid plan for Base)
+  'base.blockscout.com',
   // Uniswap Trading API
   'trade-api.gateway.uniswap.org',
   // LI.FI / Jumper
@@ -56,6 +58,10 @@ const ALLOWED_HOSTS = new Set([
   // Spritz Finance (off-ramp)
   'api.spritz.finance',
   'platform.spritz.finance',
+  // Peer (decentralized P2P off-ramp on Base)
+  'api.zkp2p.xyz',
+  'indexer.hyperindex.xyz',
+  'attestation-service.zkp2p.xyz',
   // WalletConnect relay
   'relay.walletconnect.com',
   // localhost (for dev/testing)

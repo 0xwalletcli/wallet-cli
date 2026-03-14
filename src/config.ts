@@ -186,6 +186,10 @@ export const BASESCAN_CHAIN_ID = {
   testnet: '84532',  // Base Sepolia
 } as const;
 
+// Blockscout API for Base (free, Etherscan-compatible, no API key needed)
+// Etherscan V2 requires a paid plan for Base — Blockscout is the free alternative
+export const BLOCKSCOUT_BASE_API = 'https://base.blockscout.com/api';
+
 export function getEvmRpcUrl(network: Network, chain: EvmChain = 'ethereum'): string {
   if (chain === 'base') {
     if (process.env.BASE_RPC_URL) return process.env.BASE_RPC_URL;

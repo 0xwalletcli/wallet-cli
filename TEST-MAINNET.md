@@ -367,21 +367,139 @@ wallet balance
 
 ---
 
-## Phase 15: Withdraw USDC to bank (Spritz off-ramp)
+## Phase 15: P2P on-ramp + off-ramp via Peer
+
+Peer is a decentralized P2P protocol on Base. No KYC, non-custodial.
+- **Deposit (on-ramp):** buy USDC by paying fiat to a seller
+- **Withdraw (off-ramp):** sell USDC by locking it in escrow, receive fiat from buyers
+
+Requires an EVM signer (env key, WalletConnect, or browser).
+
+### Step 0: Configure + check platforms
+
+```bash
+# 15.0 — Configure payment handles (one-time setup)
+wallet config set handle venmo @your-venmo-username
+wallet config set handle zelle your-email@bank.com
+wallet config                    # verify handles saved
+
+# 15.1 — Check supported platforms
+wallet withdraw platforms
+wallet deposit platforms
+```
+
+### Step 1: Deposit — buy USDC with fiat (on-ramp)
+
+```bash
+# 15.2 — Check available USDC to buy
+wallet deposit liquidity 100
+
+# 15.3 — Buy USDC via Venmo (dry-run — preview sellers)
+wallet deposit 100 --from venmo
+
+# 15.4 — Buy USDC via Venmo (execute — signal intent, then pay seller)
+wallet deposit 100 --from venmo --run
+
+# 15.5 — Buy USDC from any platform (shows all sellers, you pick)
+wallet deposit 100 --run
+
+# 15.6 — Verify USDC arrived
+wallet balance
+```
+
+### Step 2: Get USDC onto Base (if needed for withdraw)
+
+```bash
+# 15.7 — Bridge USDC from Ethereum to Base
+wallet bridge 10 usdc usdc-base --run
+
+# 15.8 — Verify USDC arrived on Base
+wallet balance
+```
+
+### Step 3: Withdraw — sell USDC for fiat (off-ramp)
+
+```bash
+# 15.9 — Check off-ramp liquidity
+wallet withdraw liquidity 5
+
+# 15.10 — Off-ramp to Venmo only (dry-run — preview)
+wallet withdraw 5 --to venmo
+
+# 15.11 — Off-ramp to Venmo (execute — lock USDC, receive fiat)
+#          Handle auto-filled from config
+#          Spread:        2 (2% — buyer pays $5.10 for $5 USDC)
+wallet withdraw 5 --to venmo --run
+
+# 15.12 — Off-ramp with all platforms (interactive — select which)
+wallet withdraw 5 --run
+
+# 15.13 — List active positions
+wallet withdraw list
+```
+
+### Step 4: Manage positions
+
+```bash
+# 15.14 — Add more funds to a position
+wallet withdraw add <positionId> 3 --run
+
+# 15.15 — Remove some funds
+wallet withdraw remove <positionId> 2 --run
+
+# 15.16 — Pause position (stop accepting buyers temporarily)
+wallet withdraw pause <positionId> --run
+
+# 15.17 — Resume position
+wallet withdraw resume <positionId> --run
+```
+
+### Step 5: Monitor + close
+
+```bash
+# 15.18 — Check if any buyers have signaled intent / completed purchases
+wallet withdraw history
+
+# 15.19 — Close position (reclaim all remaining USDC)
+wallet withdraw close <positionId> --run
+
+# 15.20 — Verify closed
+wallet withdraw list
+wallet withdraw list closed
+```
+
+### How Peer works
+
+**Deposit (on-ramp — you're the buyer):**
+1. You signal intent on a seller's position (locks USDC in escrow for you)
+2. You pay the seller fiat via Venmo/Zelle/CashApp/Revolut
+3. zkTLS proves your payment → escrow releases USDC to your wallet
+
+**Withdraw (off-ramp — you're the seller/LP):**
+1. You lock USDC into Peer escrow on Base
+2. Buyers find your position on peer.xyz and signal intent
+3. Buyer pays you fiat, proves payment with zkTLS → escrow releases USDC to buyer
+4. You receive fiat in your Venmo/Zelle account + your spread as profit
+
+Monitor activity with `wallet withdraw history`.
+
+---
+
+## Phase 15b: Withdraw USDC to bank (Spritz off-ramp)
 
 Requires `SPRITZ_API_KEY` in `.env` and a linked bank account on Spritz.
 
 ```bash
-# 15.1 — List linked bank accounts
+# 15b.1 — List linked bank accounts
 wallet withdraw accounts
 
-# 15.2 — Withdraw (dry-run)
+# 15b.2 — Withdraw (dry-run)
 wallet withdraw 1
 
-# 15.3 — Withdraw (execute — sends USDC to Spritz, ACH to bank ~1 business day)
+# 15b.3 — Withdraw (execute — sends USDC to Spritz, ACH to bank ~1 business day)
 wallet withdraw 1 --run
 
-# 15.4 — Verify + history
+# 15b.4 — Verify + history
 wallet balance
 wallet withdraw history
 ```
@@ -413,6 +531,7 @@ wallet bridge history
 wallet stake history
 wallet unstake history
 wallet zap history
+wallet withdraw list
 wallet withdraw history
 wallet txs --limit 20
 
@@ -447,6 +566,9 @@ wallet balance
 | Bridge SOL -> ETH | Reverse direction | `wallet bridge 0.01 sol eth --run` |
 | Swap WSOL-ETH | Need to buy WSOL-ETH first | `wallet buy 0.5 wsol-eth --run` then `wallet swap 0.5 wsol-eth eth --run` |
 | Send USDC (ERC-20 transfer) | Same as send ETH, just ERC-20 | `wallet send 1 usdc <address> --run` |
+| Off-ramp with all 4 platforms | Need handles for all | `wallet withdraw 10 --run` or `--to cashapp`, `--to revolut` |
+| On-ramp with all 4 platforms | Need sellers on all | `wallet deposit 100 --from cashapp --run`, `--from revolut` |
+| Position buyer intent | Need a buyer on peer.xyz | Wait for buyer activity, check `wallet withdraw history` |
 
 ---
 
@@ -518,11 +640,33 @@ wallet balance
 | 13.1-13.2 | Unstake JitoSOL -> SOL | gas | [ ] |
 | **Phase 14 — Wrap/unwrap SOL** | | | |
 | 14.1-14.4 | Wrap + unwrap SOL/WSOL | gas | [ ] |
-| **Phase 15 — Withdraw (Spritz)** | | | |
-| 15.1 | Withdraw accounts | free | [ ] |
-| 15.2 | Withdraw dry-run | free | [ ] |
-| 15.3 | Withdraw USDC to bank | ~$1 | [ ] |
-| 15.4 | Withdraw history | free | [ ] |
+| **Phase 15 — Peer P2P (on-ramp + off-ramp)** | | | |
+| 15.0 | Configure handles (venmo, zelle) | free | [ ] |
+| 15.1 | Discover platforms | free | [ ] |
+| 15.2 | Deposit liquidity check | free | [ ] |
+| 15.3 | Deposit dry-run (--from venmo) | free | [ ] |
+| 15.4 | Deposit 100 USDC --from venmo (on-ramp) | gas | [ ] |
+| 15.5 | Deposit 100 USDC (all platforms) | gas | [ ] |
+| 15.6 | Verify balance | free | [ ] |
+| 15.7 | Bridge USDC to Base | ~$3 | [ ] |
+| 15.8 | Balance check (Base USDC) | free | [ ] |
+| 15.9 | Withdraw liquidity check | free | [ ] |
+| 15.10 | Withdraw dry-run (--to venmo) | free | [ ] |
+| 15.11 | Withdraw 5 USDC --to venmo (off-ramp) | gas | [ ] |
+| 15.12 | Withdraw 5 USDC (all platforms) | gas | [ ] |
+| 15.13 | List active positions | free | [ ] |
+| 15.14 | Add funds to position | gas | [ ] |
+| 15.15 | Remove funds from position | gas | [ ] |
+| 15.16 | Pause position | gas | [ ] |
+| 15.17 | Resume position | gas | [ ] |
+| 15.18 | Withdraw history (buyer activity) | free | [ ] |
+| 15.19 | Close position | gas | [ ] |
+| 15.20 | Verify closed (list + list closed) | free | [ ] |
+| **Phase 15b — Withdraw (Spritz)** | | | |
+| 15b.1 | Withdraw accounts | free | [ ] |
+| 15b.2 | Withdraw dry-run | free | [ ] |
+| 15b.3 | Withdraw USDC to bank | ~$1 | [ ] |
+| 15b.4 | Withdraw history | free | [ ] |
 | **Phase 16 — Send** | | | |
 | 16.1 | Send ETH | gas | [ ] |
 | 16.2 | Send SOL | gas | [ ] |

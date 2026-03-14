@@ -11,11 +11,12 @@ CLI tool for managing crypto without centralized exchanges.
 - **Unstake** stETH (Lido withdrawal queue, 1-5 days) or JitoSOL (Jito instant)
 - **Zap** USDC into staked assets in one step — stETH (swap+Lido) or JitoSOL (bridge+Jito)
 - **Value** any token in USD, or convert between tokens (`wallet value 10000 usdc eth`)
-- **Quote** compare end-to-end costs across multiple DeFi paths with yield projections
+- **Quote** compare end-to-end costs across DeFi staking paths + off-ramp paths (Peer P2P liquidity, Spritz ACH)
 - **Transactions** history across Ethereum, Base, and Solana with clickable explorer links
 - **Wrap/Unwrap** native assets: ETH ↔ WETH, SOL ↔ WSOL
 - **Audit** all integrations before mainnet transactions (prices, pools, contracts, APIs)
-- **Withdraw** USDC to your bank account (off-ramp, multi-provider — no CEX)
+- **Deposit** fiat to buy USDC via P2P ([Peer](https://peer.xyz) — decentralized, non-custodial, no KYC)
+- **Withdraw** USDC to fiat via [Peer](https://peer.xyz) P2P (Venmo/Zelle/CashApp/Revolut, Base chain) or [Spritz](https://spritz.finance) ACH
 - **Connect** MetaMask, Coinbase Wallet, Phantom (EVM via WalletConnect or browser extension; Solana via browser extension) — sign transactions without storing private keys
 - **Address book** for human-readable wallet names
 - **Price fallback** — CoinGecko primary, DeFi Llama fallback (never blocked by rate limits)
@@ -80,8 +81,9 @@ ETHERSCAN_API_KEY=               # Ethereum txs; Base txs require paid Etherscan
 UNISWAP_API_KEY=               # free key from https://developers.uniswap.org
 LIFI_API_KEY=                  # increases LI.FI rate limit (200 req/2hr → 200 req/min)
 
-# Off-ramp (withdraw USDC to bank — multi-provider, WIP)
+# Off-ramp (withdraw USDC to bank)
 SPRITZ_API_KEY=                # Spritz Finance: https://app.spritz.finance
+# Peer P2P off-ramp on Base requires an EVM signer (EVM_PRIVATE_KEY or WC_PROJECT_ID)
 ```
 
 ## Quick Start
@@ -136,6 +138,8 @@ wallet config set signer evm browser     # EVM via browser extension (MetaMask, 
 wallet config set signer solana browser   # Solana via browser extension
 wallet config set signer solana env       # Solana via .env keys
 wallet config set signer env              # both chains via .env keys (default)
+wallet config set handle venmo @your-venmo-username    # payment handle for Peer off-ramp
+wallet config set handle zelle your-email@bank.com     # payment handle for Peer off-ramp
 wallet config reset                        # back to defaults
 ```
 
@@ -237,21 +241,38 @@ wallet unstake claim steth --run
 wallet unstake 10 jitosol --run
 ```
 
-### 10. Withdraw USDC to bank (off-ramp)
+### 10. Deposit — on-ramp (fiat → USDC)
+
+Check available USDC to buy via Peer P2P.
 
 ```bash
-# List linked bank accounts
-wallet withdraw accounts
-
-# Withdraw USDC to your bank (dry-run first)
-wallet withdraw 500
-wallet withdraw 500 --run
-
-# Recent withdrawals
-wallet withdraw history
+wallet deposit platforms                     # supported payment platforms
+wallet deposit liquidity 1000               # available USDC to buy
 ```
 
-### 11. Send to external wallets
+### 11. Withdraw — off-ramp (USDC → fiat)
+
+Off-ramp via Peer P2P (Venmo/Zelle/CashApp/Revolut) or Spritz ACH.
+
+```bash
+# Off-ramp USDC to fiat
+wallet withdraw 1000 --run                   # lock USDC, select platforms + spread
+wallet withdraw liquidity 5000              # check off-ramp liquidity
+
+# Manage positions
+wallet withdraw list                         # active positions
+wallet withdraw list closed                  # closed positions
+wallet withdraw add 42 200 --run             # add $200 to position #42
+wallet withdraw remove 42 100 --run          # remove $100 from position #42
+wallet withdraw close 42 --run               # close position + reclaim USDC
+wallet withdraw pause 42 --run               # stop accepting buyers
+wallet withdraw resume 42 --run              # resume
+wallet withdraw platforms                    # supported payment platforms
+wallet withdraw accounts                     # linked bank accounts (Spritz)
+wallet withdraw history                      # recent activity
+```
+
+### 12. Send to external wallets
 
 ```bash
 wallet send 0.5 eth coinbase-eth --run
@@ -261,7 +282,7 @@ wallet send 5 sol coinbase-sol --run
 wallet send 10 sol phantom --run
 ```
 
-### 12. Review
+### 13. Review
 
 ```bash
 wallet balance                 # balances across Ethereum, Base, and Solana
@@ -273,7 +294,8 @@ wallet stake history           # recent staking transactions
 wallet unstake history         # recent unstakes + pending Lido withdrawals
 wallet zap history             # recent zap operations
 wallet buy history             # recent buy orders
-wallet withdraw history        # recent withdrawals
+wallet withdraw list            # active Peer positions
+wallet withdraw history        # recent off-ramp activity
 ```
 
 ## All Commands
@@ -302,7 +324,7 @@ wallet withdraw history        # recent withdrawals
 | `wallet zap history` | Recent zap operations |
 | `wallet quote <amount>` | Compare end-to-end costs + yield projections (6 paths across all providers) |
 | `wallet config` | View current CLI configuration |
-| `wallet config set <key> <value> [chain]` | Set config (e.g., `config set swap cow`, `config set signer evm wc`) |
+| `wallet config set <key> <value> [chain]` | Set config (e.g., `config set swap cow`, `config set signer evm wc`, `config set handle venmo @user`) |
 | `wallet config reset` | Reset config to defaults (auto) |
 | `wallet audit` | Security audit of all integrations (required every 7 days for mainnet) |
 | `wallet health` | Check status of all RPCs, APIs, staking APR/APY, and asset prices |
@@ -310,9 +332,18 @@ wallet withdraw history        # recent withdrawals
 | `wallet tokens` | Show supported tokens, addresses, and explorer links |
 | `wallet mint <token> [amount]` | Get testnet tokens — `mint eth`, `mint usdc` (faucet links), `mint sol 2` (airdrop) |
 | `wallet approve <token> <spender> <amt>` | ERC-20 approval helper |
-| `wallet withdraw <amount>` | Withdraw USDC to bank account (off-ramp, multi-provider, mainnet only) |
-| `wallet withdraw accounts` | List linked bank accounts |
-| `wallet withdraw history` | Recent withdrawals |
+| `wallet deposit platforms` | Supported payment platforms for buying USDC |
+| `wallet deposit liquidity <amount>` | Available USDC to buy via Peer P2P (on-ramp) |
+| `wallet withdraw <amount>` | Off-ramp USDC to fiat via Peer P2P or Spritz ACH |
+| `wallet withdraw liquidity <amount>` | Check off-ramp liquidity |
+| `wallet withdraw list [closed]` | List active or closed Peer positions |
+| `wallet withdraw add <id> <amount>` | Add USDC to a position |
+| `wallet withdraw remove <id> <amount>` | Remove USDC from a position |
+| `wallet withdraw close <id>` | Close position and reclaim USDC |
+| `wallet withdraw pause/resume <id>` | Pause or resume accepting buyers |
+| `wallet withdraw platforms` | Supported payment platforms (Peer) |
+| `wallet withdraw accounts` | List linked bank accounts (Spritz) |
+| `wallet withdraw history` | Recent off-ramp activity |
 | `wallet cancel [orderId]` | Cancel a pending CoW Swap order |
 | `wallet connect [chain] [browser]` | Connect wallet — EVM via WalletConnect or `evm browser`; Solana via browser (MetaMask, Coinbase, Phantom, Solflare) |
 | `wallet disconnect [target]` | Disconnect session(s) — WC + browser (`disconnect evm`, `disconnect solana`, `disconnect metamask`, or all) |
@@ -364,7 +395,7 @@ wallet withdraw history        # recent withdrawals
 ## Security
 
 - **Audit gate** — mainnet write commands are blocked unless a passing `wallet audit` has been run within the last 7 days. The audit verifies all integrated services, price sanity, pool health, stETH/ETH ratio, and USDC peg stability.
-- **Network egress guard** — all outbound connections are restricted to a whitelist of known hosts (RPCs, CoW, deBridge, Jupiter, Uniswap, LI.FI, Spritz, Peer/ZKP2P, CoinGecko, DeFi Llama). Even if an npm dependency is compromised, it cannot phone home with your keys.
+- **Network egress guard** — all outbound connections are restricted to a whitelist of known hosts (RPCs, CoW, deBridge, Jupiter, Uniswap, LI.FI, Spritz, Peer, CoinGecko, DeFi Llama). Even if an npm dependency is compromised, it cannot phone home with your keys.
 - **`child_process` disabled** — prevents subprocess-based exfiltration (`curl`, `wget`, etc.)
 - **UDP sockets blocked** — prevents DNS-tunneling exfiltration
 - **Install scripts disabled** (`.npmrc: ignore-scripts=true`) — prevents `postinstall` attacks
@@ -376,6 +407,25 @@ wallet withdraw history        # recent withdrawals
 - Bridge validates contract addresses against known deBridge DLN contracts
 - Balances are checked before attempting transactions
 - `.env` is in `.gitignore` — never committed
+
+## Peer Off-ramp: On-chain vs Off-chain
+
+[Peer](https://peer.xyz) (prev ZKP2P) is a decentralized P2P off-ramp. Here's exactly what happens on-chain vs off-chain:
+
+**On-chain (trustless, verifiable on Base):**
+- USDC escrow — positions are locked in smart contracts (`0x2f121cdd...88888`), not held by Peer
+- Intent signaling — buyer commits to purchase on-chain
+- Fund release — USDC released to buyer after zero-knowledge proof of fiat payment
+- All custody is non-custodial — the protocol contracts hold funds, not any company
+
+**Off-chain (centralized API at `api.zkp2p.xyz`):**
+- Liquidity discovery — finding available positions and matching buyers to sellers
+- Quote/pricing — the `/v2/quote` endpoint aggregates available LP rates
+- ZK proof verification relay — verifying proof-of-payment (e.g., you prove you sent Venmo without revealing account details)
+
+**Why we use the API:** The on-chain contracts don't have a built-in order book. To find available positions and their rates, you'd have to scan all contract events and index them yourself — which is what Peer's indexer (`indexer.hyperindex.xyz`) does. The API is a convenience layer over on-chain state. We could theoretically read positions directly from the contract, but it would be significantly slower and more complex.
+
+**Supported payment platforms:** Venmo, Zelle, CashApp, Revolut. Available liquidity varies by platform and changes in real-time — `wallet quote`, `wallet withdraw liquidity`, and `wallet health` show current availability.
 
 ## How It Works
 
@@ -392,7 +442,7 @@ wallet withdraw history        # recent withdrawals
 | **Stake SOL** | Jito | SOL -> JitoSOL, liquid staking + MEV rewards (~7% APR) |
 | **Unstake ETH** | Lido | stETH -> request withdrawal (1-5 day queue) -> claim ETH |
 | **Unstake SOL** | Jito | JitoSOL -> SOL, instant via SPL stake pool |
-| **Withdraw** | Multi-provider | USDC -> fiat to bank account (off-ramp, configurable provider) |
+| **Withdraw** | Multi-provider | USDC -> fiat: Spritz (bank ACH) or Peer (P2P on Base — Venmo/Zelle/CashApp/Revolut) |
 | **Send** | Direct transfer | ETH/ERC-20 (Ethereum), ETH-BASE/USDC-BASE (Base), or SOL/SPL (Solana) to any address |
 | **Wrap/Unwrap** | WETH / WSOL | Native assets (ETH/SOL) to ERC-20/SPL equivalents and back |
 | **Zap** | Multi-platform | USDC -> stETH (swap+Lido) or USDC -> JitoSOL (bridge+Jito) |
@@ -412,7 +462,7 @@ Swap, bridge, and off-ramp protocols are pluggable providers behind a common int
 | **Bridge** | [deBridge](https://debridge.finance) | Cross-chain ETH/USDC/SOL both ways |
 | **Bridge** | [LI.FI/Jumper](https://li.fi) | Cross-chain bridge aggregator |
 | **Off-ramp** | [Spritz Finance](https://spritz.finance) | USDC -> bank account via ACH (US, mainnet only) |
-| **Off-ramp** | [Peer/ZKP2P](https://peer.xyz) | Decentralized P2P off-ramp via Zelle/Venmo (Base chain, coming soon) |
+| **Off-ramp** | [Peer](https://peer.xyz) | Decentralized P2P off-ramp on Base — Venmo, Zelle, CashApp, Revolut. Non-custodial, no KYC |
 
 Provider resolution order: `--route`/`--provider` flag > `wallet config` setting > `auto` (all providers).
 

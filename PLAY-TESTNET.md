@@ -10,6 +10,8 @@ Testnet runs live by default (no `--run` needed). Use `--dry-run` to simulate.
 - **Jupiter**: mainnet only — no SOL swaps/buying on testnet
 - **Jito staking**: mainnet only — no SOL staking on testnet
 - **WSOL-ETH (Wormhole)**: mainnet only — no liquidity on Sepolia
+- **Deposit (Peer)**: mainnet only — P2P deposits on Base
+- **Withdraw (Spritz)**: mainnet only — off-ramp to bank
 - **CoW Swap**: works on Sepolia (USDC <-> ETH)
 - **Lido**: works on Sepolia (Holesky stETH)
 - **SOL airdrop**: devnet only, max 2 SOL per request

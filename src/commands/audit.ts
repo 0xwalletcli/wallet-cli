@@ -1,7 +1,7 @@
 import { PublicKey } from '@solana/web3.js';
 import { createPublicClient, http, parseAbi, type Chain } from 'viem';
 import { getStakePoolAccount } from '@solana/spl-stake-pool';
-import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, getEvmRpcUrl, getEvmChain } from '../config.js';
+import { type Network, COW_CONFIG, DEBRIDGE_CONFIG, LIDO_CONFIG, JITO_CONFIG, JUPITER_CONFIG, UNISWAP_CONFIG, LIFI_CONFIG, TOKENS, SOLANA_MINTS, ETHERSCAN_API, ETHERSCAN_CHAIN_ID, BLOCKSCOUT_BASE_API, getEvmRpcUrl, getEvmChain } from '../config.js';
 import { resolveSigner } from '../signers/index.js';
 import { getPublicClient } from '../lib/evm.js';
 import { getConnection } from '../lib/solana.js';
@@ -24,6 +24,10 @@ const REQUIRED_HOSTS = [
   'trade-api.gateway.uniswap.org',
   'li.quest',
   'api.spritz.finance',
+  'base.blockscout.com',
+  'api.zkp2p.xyz',
+  'indexer.hyperindex.xyz',
+  'attestation-service.zkp2p.xyz',
 ];
 
 // minimum pool sizes to consider healthy
@@ -273,12 +277,13 @@ export async function auditCommand(network: Network) {
   const uniswapApiKey = process.env.UNISWAP_API_KEY;
 
   const spritzApiKey = process.env.SPRITZ_API_KEY;
+  const peerConfigured = !!(process.env.EVM_PRIVATE_KEY || process.env.WC_PROJECT_ID);
 
   const [
     evmBlock, baseBlock, solSlot, marketPrices,
     cowEth, cowWsol, jupSol, deBridgeSol,
-    deBridgeStatus, etherscanCheck, stethRatio, lidoSupply, jitoPool,
-    uniswapCheck, lifiCheck, spritzCheck,
+    deBridgeStatus, etherscanCheck, blockscoutCheck, stethRatio, lidoSupply, jitoPool,
+    uniswapCheck, lifiCheck, spritzCheck, peerCheck,
   ] = await Promise.allSettled([
     // Infrastructure
     withTimeout(client.getBlockNumber(), TIMEOUT).then(block => ({ block, ms: Date.now() - evmStart })),
@@ -323,6 +328,27 @@ export async function auditCommand(network: Network) {
       }
       return { ms: Date.now() - start };
     })() : Promise.resolve(null),
+    // Blockscout API (Base tx history — free, no key)
+    (async () => {
+      const start = Date.now();
+      const params = new URLSearchParams({
+        module: 'account',
+        action: 'txlist',
+        address: '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+        startblock: '0',
+        endblock: '99999999',
+        page: '1',
+        offset: '1',
+        sort: 'desc',
+      });
+      const res = await withTimeout(fetch(`${BLOCKSCOUT_BASE_API}?${params}`), TIMEOUT);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { status: string; message: string; result: unknown };
+      if (data.status !== '1' || !Array.isArray(data.result)) {
+        throw new Error(typeof data.result === 'string' ? data.result : data.message || 'invalid response');
+      }
+      return { ms: Date.now() - start };
+    })(),
     // On-chain reads
     getStethRatio(network),
     withTimeout(client.readContract({
@@ -365,6 +391,55 @@ export async function auditCommand(network: Network) {
       const client = getSpritzClient();
       const accounts = await withTimeout(client.bankAccount.list(), TIMEOUT);
       return { ms: Date.now() - start, accounts: accounts.length };
+    })() : Promise.resolve(null),
+    // Peer API + liquidity check (P2P off-ramp on Base)
+    // Peer API + liquidity check — use exact-token quote as health probe
+    peerConfigured ? (async () => {
+      const start = Date.now();
+      // quotesToReturn=50 to see full orderbook (default only returns best quote)
+      const quoteRes = await withTimeout(fetch('https://api.zkp2p.xyz/v2/quote/exact-token?quotesToReturn=50', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paymentPlatforms: ['venmo', 'zelle', 'cashapp', 'revolut'],
+          fiatCurrency: 'USD',
+          destinationChainId: 8453,
+          destinationToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+          exactTokenAmount: '5000000000', // 5,000 USDC (6 decimals)
+          user: '0x0000000000000000000000000000000000000001',
+          recipient: '0x0000000000000000000000000000000000000001',
+        }),
+      }), TIMEOUT);
+      const ms = Date.now() - start;
+      let liquidity: number | null = null;
+      let liquidityByPlatform: Record<string, number> = {};
+
+      if (quoteRes.ok) {
+        const quoteData = await quoteRes.json() as any;
+        const quotes = quoteData?.responseObject?.quotes || quoteData?.quotes || [];
+        if (Array.isArray(quotes) && quotes.length > 0) {
+          const byPlatform: Record<string, number> = {};
+          for (const q of quotes) {
+            // Each quote has tokenAmount (raw USDC) representing fillable liquidity
+            const tokenAmt = q.tokenAmount ? Number(q.tokenAmount) / 1e6 : 0;
+            const platform = q.paymentMethod || q.paymentPlatform || 'unknown';
+            byPlatform[platform] = (byPlatform[platform] || 0) + tokenAmt;
+          }
+          liquidity = Object.values(byPlatform).reduce((a, b) => a + b, 0);
+          liquidityByPlatform = byPlatform;
+        }
+      } else {
+        // JSON 404 = "no quotes found" (API alive, no liquidity) vs real error
+        try {
+          const body = await quoteRes.json() as any;
+          if (body?.message !== 'No quotes found') throw new Error(`HTTP ${quoteRes.status}`);
+          liquidity = 0;
+        } catch (e) {
+          if (e instanceof Error && e.message.startsWith('HTTP')) throw e;
+          throw new Error(`HTTP ${quoteRes.status}`);
+        }
+      }
+      return { ms, liquidity, liquidityByPlatform };
     })() : Promise.resolve(null),
   ]);
 
@@ -433,6 +508,15 @@ export async function auditCommand(network: Network) {
   } else {
     printCheck('Etherscan API', 'fail', etherscanCheck.reason?.message || 'failed');
     record('Etherscan API', 'fail', etherscanCheck.reason?.message || 'failed');
+  }
+
+  // Blockscout API (Base tx history)
+  if (blockscoutCheck.status === 'fulfilled') {
+    printCheck('Blockscout (Base)', 'ok', `OK (${blockscoutCheck.value.ms}ms)`);
+    record('Blockscout Base', 'ok', `OK (${blockscoutCheck.value.ms}ms)`);
+  } else {
+    printCheck('Blockscout (Base)', 'fail', blockscoutCheck.reason?.message || 'failed');
+    record('Blockscout Base', 'fail', blockscoutCheck.reason?.message || 'failed');
   }
 
   // Tier 2: Market Prices
@@ -590,8 +674,45 @@ export async function auditCommand(network: Network) {
       }
     }
   } else {
-    printCheck('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
-    record('Spritz API', 'fail', spritzCheck.reason?.message || 'failed');
+    printCheck('Spritz API', 'warn', `${spritzCheck.reason?.message || 'failed'} (optional — Peer P2P available)`);
+    record('Spritz API', 'warn', spritzCheck.reason?.message || 'failed');
+  }
+
+  // Peer (P2P off-ramp)
+  console.log(`\n  ── Peer (Off-ramp) ${SEP}`);
+
+  if (!peerConfigured) {
+    printCheck('Peer API', 'warn', 'No EVM signer configured (P2P off-ramp unavailable)');
+    record('Peer API', 'warn', 'No signer configured');
+  } else if (peerCheck.status === 'fulfilled') {
+    if (peerCheck.value == null) {
+      printCheck('Peer API', 'warn', 'Skipped (no signer)');
+      record('Peer API', 'warn', 'Skipped');
+    } else {
+      printCheck('Peer API', 'ok', `OK (${peerCheck.value.ms}ms)`);
+      record('Peer API', 'ok', `OK (${peerCheck.value.ms}ms)`);
+      // Liquidity check (per-platform breakdown)
+      const liq = peerCheck.value.liquidity;
+      if (liq != null) {
+        const liqStatus = liq > 1000 ? 'ok' : liq > 0 ? 'warn' : 'fail';
+        const byPlatform = peerCheck.value.liquidityByPlatform || {};
+        const platformParts = Object.entries(byPlatform)
+          .filter(([, v]) => v > 0)
+          .sort(([, a], [, b]) => b - a)
+          .map(([p, v]) => `${p}: $${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`);
+        const liqStr = liq > 0
+          ? `$${liq.toLocaleString('en-US', { maximumFractionDigits: 0 })} USDC available`
+          : 'No liquidity found';
+        printCheck('Peer liquidity', liqStatus, liqStr);
+        if (platformParts.length > 0) {
+          printDetail('By platform:', platformParts.join(', '));
+        }
+        record('Peer liquidity', liqStatus, liqStr);
+      }
+    }
+  } else {
+    printCheck('Peer API', 'fail', peerCheck.reason?.message || 'failed');
+    record('Peer API', 'fail', peerCheck.reason?.message || 'failed');
   }
 
   // Cross-platform comparison

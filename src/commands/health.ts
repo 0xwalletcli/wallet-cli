@@ -217,6 +217,61 @@ async function checkSpritz(): Promise<CheckResult> {
   }
 }
 
+async function checkPeer(): Promise<CheckResult> {
+  const start = Date.now();
+  try {
+    // Use the quote endpoint as both health check and liquidity probe (no dedicated health endpoint exists)
+    // exact-token: "I have X USDC, what fiat do I get?" — more reliable than exact-fiat
+    // quotesToReturn=50 to see full orderbook (default only returns best quote)
+    const quoteRes = await withTimeout(fetch('https://api.zkp2p.xyz/v2/quote/exact-token?quotesToReturn=50', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paymentPlatforms: ['venmo', 'zelle', 'cashapp', 'revolut'],
+        fiatCurrency: 'USD',
+        destinationChainId: 8453,
+        destinationToken: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        exactTokenAmount: '5000000000', // 5,000 USDC (6 decimals)
+        user: '0x0000000000000000000000000000000000000001',
+        recipient: '0x0000000000000000000000000000000000000001',
+      }),
+    }), TIMEOUT);
+    const latency = Date.now() - start;
+
+    // API returns JSON 404 for "no quotes found" — that's still a live API, just no liquidity
+    let detail = '';
+    if (quoteRes.ok) {
+      const data = await quoteRes.json() as any;
+      const quotes = data?.responseObject?.quotes || data?.quotes || [];
+      if (Array.isArray(quotes) && quotes.length > 0) {
+        const platforms = new Set<string>();
+        for (const q of quotes) {
+          platforms.add(q.paymentMethod || q.paymentPlatform || 'unknown');
+        }
+        const platformList = [...platforms].join(', ');
+        detail = `${quotes.length} quote(s) (${platformList})`;
+      } else {
+        detail = 'no liquidity';
+      }
+    } else {
+      // Check if it's a JSON "no quotes" 404 (API is alive) vs a real routing error
+      try {
+        const body = await quoteRes.json() as any;
+        if (body?.message === 'No quotes found') {
+          detail = 'no liquidity';
+        } else {
+          return { status: 'DOWN', detail: `HTTP ${quoteRes.status}`, latency };
+        }
+      } catch {
+        return { status: 'DOWN', detail: `HTTP ${quoteRes.status}`, latency };
+      }
+    }
+    return { status: latency > 2000 ? 'SLOW' : 'OK', detail, latency };
+  } catch {
+    return { status: 'DOWN', latency: Date.now() - start };
+  }
+}
+
 async function checkJupiter(): Promise<CheckResult> {
   const start = Date.now();
   try {
@@ -393,7 +448,7 @@ export async function healthCommand() {
   console.log('  Checking services...\n');
 
   // Run all checks in parallel
-  const [evmMain, evmTest, baseMain, baseTest, solMain, solTest, cow, uniswap, lifi, debridge, jupiter, etherscan, spritz, lido, jito, market, swapPrices, bridgePrices, jupSol, lidoApr, jitoApy] =
+  const [evmMain, evmTest, baseMain, baseTest, solMain, solTest, cow, uniswap, lifi, debridge, jupiter, etherscan, spritz, peer, lido, jito, market, swapPrices, bridgePrices, jupSol, lidoApr, jitoApy] =
     await Promise.all([
       checkEvmRpc('mainnet'),
       checkEvmRpc('testnet'),
@@ -408,6 +463,7 @@ export async function healthCommand() {
       checkJupiter(),
       checkEtherscan(),
       checkSpritz(),
+      checkPeer(),
       checkLido(),
       checkJito(),
       getMarketPrices(),
@@ -433,6 +489,7 @@ export async function healthCommand() {
     { label: 'Jupiter', result: jupiter },
     { label: 'Etherscan', result: etherscan },
     { label: 'Spritz (off-ramp)', result: spritz },
+    { label: 'Peer (off-ramp)', result: peer },
     { label: 'Lido (stETH)', result: lido, extra: lido.status !== 'DOWN' && lidoApr != null ? `APR ${lidoApr.toFixed(2)}%` : undefined },
     { label: 'Jito (JitoSOL)', result: jito, extra: jito.status !== 'DOWN' && jitoApy != null ? `APY ${(jitoApy * 100).toFixed(2)}%` : undefined },
   ];
@@ -456,11 +513,15 @@ export async function healthCommand() {
 
   // Exchanges & Bridges
   console.log(`\n  ── Exchanges & Bridges ${SEP}`);
-  printAligned(6); printAligned(7); printAligned(8); printAligned(9); printAligned(10); printAligned(11); printAligned(12);
+  printAligned(6); printAligned(7); printAligned(8); printAligned(9); printAligned(10); printAligned(11);
+
+  // Off-ramp
+  console.log(`\n  ── Off-ramp ${SEP}`);
+  printAligned(12); printAligned(13);
 
   // Staking
   console.log(`\n  ── Staking ${SEP}`);
-  printAligned(13); printAligned(14);
+  printAligned(14); printAligned(15);
 
   // Prices — execution vs market
   console.log(`\n  ── Prices ${SEP}`);

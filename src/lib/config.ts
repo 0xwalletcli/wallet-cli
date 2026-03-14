@@ -10,11 +10,19 @@ export interface SignerConfig {
   solana: string; // 'env' | 'browser'
 }
 
+export interface PaymentHandles {
+  venmo?: string;
+  zelle?: string;
+  cashapp?: string;
+  revolut?: string;
+}
+
 export interface WalletConfig {
   swapProvider: string;    // 'auto' | 'cow' | 'uniswap' | 'lifi'
   bridgeProvider: string;  // 'auto' | 'debridge' | 'lifi'
   offrampProvider: string; // 'auto' | 'spritz'
   signer: string | SignerConfig; // legacy string or per-chain object
+  handles?: PaymentHandles; // saved payment handles for Peer off-ramp
 }
 
 const DEFAULTS: WalletConfig = {
@@ -26,8 +34,9 @@ const DEFAULTS: WalletConfig = {
 
 const VALID_SWAP_PROVIDERS = ['auto', 'cow', 'uniswap', 'lifi'];
 const VALID_BRIDGE_PROVIDERS = ['auto', 'debridge', 'lifi'];
-const VALID_OFFRAMP_PROVIDERS = ['auto', 'spritz'];
+const VALID_OFFRAMP_PROVIDERS = ['auto', 'spritz', 'peer'];
 const VALID_SIGNERS = ['env', 'wc', 'browser'];
+const VALID_PLATFORMS = ['venmo', 'zelle', 'cashapp', 'revolut'];
 
 /** Normalize signer config — migrates legacy string to per-chain object */
 export function getSignerConfig(config: WalletConfig): SignerConfig {
@@ -56,8 +65,13 @@ export function getConfigPath(): string {
   return CONFIG_FILE;
 }
 
-export function validateConfigKey(key: string): key is 'swap' | 'bridge' | 'offramp' | 'signer' {
-  return key === 'swap' || key === 'bridge' || key === 'offramp' || key === 'signer';
+export function validateConfigKey(key: string): key is 'swap' | 'bridge' | 'offramp' | 'signer' | 'handle' {
+  return key === 'swap' || key === 'bridge' || key === 'offramp' || key === 'signer' || key === 'handle';
+}
+
+export function getPaymentHandles(config?: WalletConfig): PaymentHandles {
+  const c = config || loadConfig();
+  return c.handles || {};
 }
 
 export function validateConfigValue(key: string, value: string): string | null {

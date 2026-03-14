@@ -12,6 +12,12 @@ npm run wallet -- <args>   # via npm script
 
 Default network is `mainnet`. Use `--network testnet` or `-n testnet` for testnet.
 
+## Debugging Rules
+
+- **Never paper over bugs with timeouts, retries, or workarounds.** Always find and fix the root cause. A timeout that "fixes" a slow call is hiding the real problem.
+- **Isolate before fixing.** When something is slow or broken, strip the call down to its simplest form (remove params one by one, test the bare endpoint, etc.) to find exactly what triggers the issue. Don't guess — test.
+- **Simplify the problem.** If an API call hangs, try it without optional params. If a function is slow, time each part individually. The fastest path to the root cause is eliminating variables, not adding defensive code.
+
 ## Conventions
 
 - **When adding new commands**: always update `README.md` (All Commands table + workflow examples) and this `CLAUDE.md` file (Architecture section + any relevant sections).
@@ -74,7 +80,7 @@ src/
     index.ts            — resolveSigner() factory: reads per-chain config (SignerConfig), returns cached Signer (PerChainSigner if EVM/Solana differ)
   commands/
     connect.ts          — `wallet connect [evm [browser]]` / `wallet connect solana` / `wallet disconnect [evm|solana|wallet]` / `wallet keys` for wallet pairing (WC + browser, per-chain disconnect)
-    config.ts           — `wallet config` / `config set` / `config reset` for provider preferences
+    config.ts           — `wallet config` / `config set` / `config reset` for provider preferences + payment handles (`config set handle venmo @user`)
     balance.ts          — multi-chain balance display (Ethereum, Base, Solana). Default shows balances only; `full` adds staking dashboard (rates, APR/APY, earned, yields) + pending withdrawals. Supports external addresses/aliases, shows WSOL. Staked token labels link to Lido/Jito, wallet addresses link to explorers.
     value.ts            — `wallet value <amount> <token> [target]` USD pricing + cross-token conversion (e.g., `value 10000 usdc eth`). Staked assets show base+USD (stETH->ETH->USD, JitoSOL->SOL->USD). Gets stETH rate from Lido contract, JitoSOL rate from Jito pool.
     swap.ts             — multi-provider swap: auto-compares CoW/Uniswap/LI.FI (Ethereum), LI.FI (Base ETH-BASE<->USDC-BASE), Jupiter (Solana USDC<->SOL). Cross-chain pairs redirect to bridge. + history/status
@@ -86,13 +92,14 @@ src/
     wrap.ts             — wrap/unwrap native assets: ETH <-> WETH (Ethereum), SOL <-> WSOL (Solana), partial unwrap for WETH
     approve.ts          — ERC-20 token approvals
     audit.ts            — comprehensive audit: prices (ETH, SOL, WSOL-ETH, USDC peg, stETH ratio), pools (Lido, Jito), APIs (CoW, Jupiter, deBridge, Uniswap, LI.FI, Etherscan), RPCs, netguard
-    quote.ts            — compare up to 6 DeFi paths (CoW/Uniswap/LI.FI+Lido, deBridge/LI.FI+Jito) for USDC -> staked assets, with yield projections per path
+    quote.ts            — compare up to 8 paths: 6 DeFi staking (CoW/Uniswap/LI.FI+Lido, deBridge/LI.FI+Jito) + 2 off-ramp (Peer P2P with liquidity check, Spritz ACH). Yield projections for staking, net fiat for off-ramp
     zap.ts              — one-step USDC -> staked asset: `zap <amt> usdc steth` (multi-provider swap+Lido) or `zap <amt> usdc jitosol` (multi-provider bridge+Jito, 2 paths)
     transactions.ts     — recent transaction history, command: `wallet txs` (Etherscan Ethereum + Base + Solana in parallel, resolves known Solana token mints)
     tokens.ts           — supported token reference (addresses, decimals, explorer links, includes WSOL)
     health.ts           — service status dashboard (RPCs, APIs, staking APR/APY, prices)
     mint.ts             — testnet faucet (SOL airdrop programmatic, ETH/USDC print URLs)
-    withdraw.ts         — withdraw USDC to bank via off-ramp provider (multi-provider, Ethereum mainnet only) + accounts/history subcommands
+    deposit.ts          — On-ramp (fiat → USDC): platforms, liquidity preview. Also contains Peer position management functions called from withdraw command.
+    withdraw.ts         — Off-ramp (USDC → fiat): Peer P2P + Spritz ACH. Subcommands: liquidity, list, add/remove/close/pause/resume, platforms, accounts, history
     cancel.ts           — cancel pending CoW Swap orders
     address.ts          — address book management
   providers/
@@ -106,7 +113,8 @@ src/
       debridge.ts       — deBridge provider: KNOWN_DLN_CONTRACTS, quote/create-tx, poll fulfillment, history/status
       lifi.ts           — LI.FI/Jumper bridge provider: cross-chain via aggregated bridges, poll via /status
     offramp/
-      spritz.ts         — Spritz Finance off-ramp provider: USDC -> bank via ACH (WIP, account disabled — finding alternatives)
+      spritz.ts         — Spritz Finance off-ramp provider: USDC -> bank via ACH (WIP, account disabled)
+      peer.ts           — Peer off-ramp provider: decentralized P2P on Base. Position management (create, add/remove funds, close, pause/resume), liquidity preview, intent history. Non-custodial, no KYC.
   lib/
     prices.ts           — shared price fetcher: CoinGecko primary + DeFi Llama fallback. Used by balance, value, quote, zap, health.
     jupiter.ts          — shared Jupiter API helpers: getJupiterQuote(), buildAndSendJupiterSwap(), getJupiterHistory(), mint/decimals lookup
@@ -119,8 +127,9 @@ src/
     solana.ts           — Solana connection, SOL/SPL/WSOL balance helpers, wrap/unwrap (accepts Signer)
     format.ts           — formatToken, parseTokenAmount, formatUSD, formatAddress, formatGasFee, link (OSC 8 hyperlink), txLink (shortened clickable tx hash)
     prompt.ts           — confirm(), validateAmount(), warnMainnet(), warnDryRun(), select() for provider selection
-    config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider, offrampProvider, per-chain signer (SignerConfig { evm, solana })
+    config.ts           — CLI config load/save (~/.wallet-cli/config.json): swapProvider, bridgeProvider, offrampProvider, per-chain signer (SignerConfig { evm, solana }), payment handles (HandleConfig { venmo, zelle, cashapp, revolut })
     spritz.ts           — Spritz Finance API client: payment requests, web3 tx params, bank account listing, payment history
+    peer.ts             — Peer SDK wrapper: Zkp2pClient singleton, Base USDC helpers, payment platform config, spread/rate conversion
     addressbook.ts      — JSON-file address book (~/.wallet-cli/addresses.json)
 ```
 
@@ -136,7 +145,8 @@ swap, bridge, buy, stake, unstake, zap support subcommands via `[args...]` varia
 | `wallet stake` | `history`, `--help` |
 | `wallet unstake` | `history`, `--help` |
 | `wallet zap` | `history`, `--help` |
-| `wallet withdraw` | `accounts`, `history`, `--help` |
+| `wallet deposit` | `platforms`, `liquidity <amt>`, `--help` |
+| `wallet withdraw` | `<amt>` (off-ramp), `liquidity <amt>`, `list [closed]`, `add <id> <amt>`, `remove <id> <amt>`, `close <id>`, `pause <id>`, `resume <id>`, `platforms`, `accounts`, `history`, `--help` |
 
 - `history` shows recent orders/transactions for that command
 - `status <orderId>` shows detailed info for a specific order (swap/bridge only)
@@ -168,7 +178,7 @@ Override with `EVM_RPC_URL`, `BASE_RPC_URL`, and `SOLANA_RPC_URL` env vars.
 - Uniswap: works on both mainnet and Sepolia, requires UNISWAP_API_KEY
 - LI.FI/Jumper: swap (same-chain, Ethereum + Base) and bridge (cross-chain), sell-only (no ExactOutput/buy orders)
 - Base chain: same EVM wallet address as Ethereum, chain IDs 8453 (mainnet) / 84532 (testnet). Tokens: ETH-BASE (native), USDC-BASE. Swaps via LI.FI, bridges via deBridge/LI.FI
-- Off-ramp (multi-provider, WIP): Spritz Finance (mainnet, US, SPRITZ_API_KEY), Peer/ZKP2P (next, Base chain, decentralized P2P)
+- Off-ramp (multi-provider): Spritz Finance (mainnet, US, SPRITZ_API_KEY), Peer (Base chain, decentralized P2P, EVM signer required)
 - Audit gate: mainnet write commands require a passing audit within 7 days
 
 ## UX Patterns
@@ -213,10 +223,12 @@ See `FEATURES-LIST.md` for the full feature roadmap with research notes and impl
 
 ### Pending Features (in priority order)
 
-5. **Off-ramp: Peer/ZKP2P** — **NEXT** — off-ramp provider (decentralized P2P, non-custodial, no KYB, Base chain). Architecture ready, needs SDK integration. Base chain support now complete.
-6. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
-7. **Bill pay** — pay credit cards, mortgages, utilities via off-ramp provider (blocked on viable provider)
-8. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
+5. **Off-ramp: Peer** — **DONE** — decentralized P2P off-ramp on Base. Deposit management (create, add/remove funds, close, pause/resume), liquidity preview, intent history. Payment methods: Venmo, Zelle, CashApp, Revolut. Non-custodial, no KYC/KYB. SDK: `@zkp2p/offramp-sdk`.
+6. **Guided Setup** — **TODO** — `wallet setup` interactive wizard: signer config (env/WC/browser per chain), API keys (Uniswap, Etherscan, LI.FI, Spritz), RPCs, Peer payment handles. Reduces onboarding friction. See FEATURES-LIST.md Feature 20.
+7. **MCP Server** — **NEXT** — expose wallet-cli as an MCP tool server for AI agents (Claude Code, etc.). Remote control via WalletConnect for mobile signing. See FEATURES-LIST.md for full plan.
+8. **Fiat on-ramp** — non-CEX provider (Coinbase Onramp, Transak, MoonPay) + TOTP 2FA
+9. **Bill pay** — pay credit cards, mortgages, utilities via off-ramp provider (blocked on viable provider)
+10. **Brokerage integrations** — Coinbase, Alpaca, Kraken, etc. (CEX-only section)
 
 ## Environment Variables (.env)
 
